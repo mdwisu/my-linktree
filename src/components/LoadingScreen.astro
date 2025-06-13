@@ -1,0 +1,31 @@
+---
+// Optional loading screen for better UX
+---
+
+<div id="loading-screen" class="fixed inset-0 bg-white dark:bg-gray-900 z-50 flex items-center justify-center transition-opacity duration-500">
+  <div class="text-center">
+    <div class="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4"></div>
+    <p class="text-gray-600 dark:text-gray-300 font-medium">Loading...</p>
+  </div>
+</div>
+
+<script>
+  // Hide loading screen when page is ready
+  window.addEventListener('load', () => {
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) {
+      loadingScreen.style.opacity = '0';
+      setTimeout(() => {
+        loadingScreen.style.display = 'none';
+      }, 500);
+    }
+  });
+
+  // Hide loading screen after max 3 seconds
+  setTimeout(() => {
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) {
+      loadingScreen.style.display = 'none';
+    }
+  }, 3000);
+</script>

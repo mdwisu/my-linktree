@@ -1,0 +1,64 @@
+---
+import LinkCard from './LinkCard.astro';
+import { links } from '../data/links';
+
+// Group links by category
+const featuredLinks = links.filter(link => link.featured);
+const workLinks = links.filter(link => link.category === 'work' && !link.featured);
+const socialLinks = links.filter(link => link.category === 'social');
+const otherLinks = links.filter(link => link.category === 'other' || !link.category);
+---
+
+<section class="py-8 px-4">
+  <div class="max-w-md mx-auto">
+    
+    <!-- Featured Links -->
+    {featuredLinks.length > 0 && (
+      <div class="mb-8">
+        <h2 class="text-xl font-semibold text-center mb-6 text-gray-800 dark:text-white">
+          ✨ Featured
+        </h2>
+        {featuredLinks.map((link, index) => (
+          <LinkCard link={link} index={index} />
+        ))}
+      </div>
+    )}
+    
+    <!-- Work Links -->
+    {workLinks.length > 0 && (
+      <div class="mb-8">
+        <h2 class="text-xl font-semibold text-center mb-6 text-gray-800 dark:text-white">
+          💼 Work
+        </h2>
+        {workLinks.map((link, index) => (
+          <LinkCard link={link} index={index + featuredLinks.length} />
+        ))}
+      </div>
+    )}
+    
+    <!-- Social Links -->
+    {socialLinks.length > 0 && (
+      <div class="mb-8">
+        <h2 class="text-xl font-semibold text-center mb-6 text-gray-800 dark:text-white">
+          🌟 Social
+        </h2>
+        {socialLinks.map((link, index) => (
+          <LinkCard link={link} index={index + featuredLinks.length + workLinks.length} />
+        ))}
+      </div>
+    )}
+    
+    <!-- Other Links -->
+    {otherLinks.length > 0 && (
+      <div>
+        <h2 class="text-xl font-semibold text-center mb-6 text-gray-800 dark:text-white">
+          🔗 More
+        </h2>
+        {otherLinks.map((link, index) => (
+          <LinkCard link={link} index={index + featuredLinks.length + workLinks.length + socialLinks.length} />
+        ))}
+      </div>
+    )}
+    
+  </div>
+</section>

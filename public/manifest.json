@@ -1,0 +1,38 @@
+{
+  "name": "My Personal Links",
+  "short_name": "MyLinks",
+  "description": "Personal link hub and social connections",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "GitHub",
+      "short_name": "GitHub",
+      "description": "View my GitHub profile",
+      "url": "/?utm_source=pwa_shortcut",
+      "icons": [
+        {
+          "src": "/icons/github-shortcut.png",
+          "sizes": "96x96"
+        }
+      ]
+    }
+  ]
+}
