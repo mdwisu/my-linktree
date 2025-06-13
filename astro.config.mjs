@@ -1,26 +1,34 @@
-// astro.config.mjs (FIXED VERSION)
+// astro.config.mjs - Updated for static deployment
 import { defineConfig } from "astro/config";
 import tailwind from "@astrojs/tailwind";
-import vercel from "@astrojs/vercel";
-import sitemap from "@astrojs/sitemap";
 
 export default defineConfig({
-  site: "https://my-linktree.vercel.app", // Ganti dengan domain Anda nanti
+  site: "https://mdwisu.vercel.app", // Replace with your actual domain
   integrations: [
     tailwind({
       applyBaseStyles: false,
     }),
-    sitemap(),
   ],
-  adapter: vercel({
-    webAnalytics: {
-      enabled: true,
-    },
-  }),
-  // Removed experimental.viewTransitions - it's now stable
+  output: "static",
   vite: {
     define: {
       __DATE__: `'${new Date().toISOString()}'`,
     },
   },
 });
+
+// Alternative config if you want server-side features later
+// import { defineConfig } from 'astro/config';
+// import tailwind from '@astrojs/tailwind';
+// import vercel from '@astrojs/vercel/serverless';
+
+// export default defineConfig({
+//   site: 'https://yoursite.vercel.app',
+//   integrations: [
+//     tailwind({
+//       applyBaseStyles: false,
+//     }),
+//   ],
+//   output: 'server',
+//   adapter: vercel(),
+// });
