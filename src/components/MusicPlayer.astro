@@ -273,7 +273,7 @@ class HowlerMusicPlayer {
 
   private detectMobile(): boolean {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-           (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /MacIntel/.test(navigator.platform));
+           Boolean(navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /MacIntel/.test(navigator.platform));
   }
 
   private async init(): Promise<void> {
@@ -845,7 +845,7 @@ class HowlerMusicPlayer {
   private handleProgressClick(e: MouseEvent): void {
     if (!this.currentSound || !this.currentSound.duration()) return;
 
-    const rect = e.currentTarget!.getBoundingClientRect();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const percentage = (e.clientX - rect.left) / rect.width;
     const newTime = percentage * this.currentSound.duration();
     
