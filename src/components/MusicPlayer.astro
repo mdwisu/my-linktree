@@ -1,5 +1,6 @@
 ---
 // Modern music player with proper error handling and accessibility
+// Panel stays CLOSED by default
 ---
 
 <div class="fixed bottom-4 right-4 z-50" id="music-player-container">
@@ -18,10 +19,10 @@
     <span class="sr-only">Music Player</span>
   </button>
 
-  <!-- Music Player Panel -->
+  <!-- Music Player Panel - STARTS CLOSED -->
   <div
     id="music-panel"
-    class="music-panel"
+    class="music-panel music-panel--closed"
     role="dialog"
     aria-label="Music player controls"
     aria-hidden="true"
@@ -158,6 +159,7 @@
     duration: number;
     isLoading: boolean;
     hasError: boolean;
+    isPanelOpen: boolean; // Add panel state tracking
   }
 
   class MusicPlayer {
@@ -167,17 +169,18 @@
     private state: PlayerState;
     private autoplayAttempted = false;
     
-    // Configuration
+    // Configuration - DISABLE autoplay by default
     private readonly config = {
       maxRetries: 3,
       fadeOutDuration: 500,
-      autoplay: true,
+      autoplay: false, // CHANGED: Disabled autoplay
       preloadNext: true,
-      saveVolume: true
+      saveVolume: true,
+      openPanelOnInit: false // ADDED: Don't open panel on init
     };
     
     private readonly playlist: readonly Track[] = [
-      {
+    {
         id: 'tacos-1',
         title: 'Raining Tacos',
         artist: 'Parry Gripp & Boonebum',
@@ -201,7 +204,7 @@
       }
       this.audio = audioElement;
 
-      // Initialize state
+      // Initialize state - panel CLOSED by default
       this.state = {
         isPlaying: false,
         currentTrackIndex: 0,
@@ -209,7 +212,8 @@
         currentTime: 0,
         duration: 0,
         isLoading: false,
-        hasError: false
+        hasError: false,
+        isPanelOpen: false // ADDED: Panel starts closed
       };
 
       this.init();
@@ -221,13 +225,14 @@
         this.setupEventListeners();
         this.setupAudioEventListeners();
         this.setupKeyboardNavigation();
-        await this.loadTrack(this.state.currentTrackIndex);
-        this.updateUI();
         
-        // Attempt autoplay after user gesture
-        if (this.config.autoplay) {
-          this.scheduleAutoplay();
-        }
+        // DON'T auto-load track immediately
+        // await this.loadTrack(this.state.currentTrackIndex);
+        
+        this.updateUI();
+        this.ensurePanelClosed(); // ADDED: Ensure panel is closed
+        
+        // NO autoplay on init
         
       } catch (error) {
         console.error('Failed to initialize music player:', error);
@@ -257,8 +262,14 @@
       }, { signal });
 
       // Playback controls
-      this.addEventListenerSafely('play-pause-btn', 'click', (e) => {
+      this.addEventListenerSafely('play-pause-btn', 'click', async (e) => {
         e.preventDefault();
+        
+        // Load track on first play if not loaded
+        if (!this.audio.src) {
+          await this.loadTrack(this.state.currentTrackIndex);
+        }
+        
         this.togglePlayback();
       }, { signal });
 
@@ -319,29 +330,24 @@
       document.addEventListener('keydown', (e) => {
         if (e.target instanceof HTMLInputElement) return;
         
+        // Only handle keyboard shortcuts when panel is open
+        if (!this.state.isPanelOpen) return;
+        
         switch (e.code) {
           case 'Space':
-            if (this.isPanelOpen()) {
-              e.preventDefault();
-              this.togglePlayback();
-            }
+            e.preventDefault();
+            this.togglePlayback();
             break;
           case 'ArrowLeft':
-            if (this.isPanelOpen()) {
-              e.preventDefault();
-              this.previousTrack();
-            }
+            e.preventDefault();
+            this.previousTrack();
             break;
           case 'ArrowRight':
-            if (this.isPanelOpen()) {
-              e.preventDefault();
-              this.nextTrack();
-            }
+            e.preventDefault();
+            this.nextTrack();
             break;
           case 'Escape':
-            if (this.isPanelOpen()) {
-              this.closePanel();
-            }
+            this.closePanel();
             break;
         }
       }, { signal });
@@ -529,7 +535,7 @@
       const container = this.elements.get('music-player-container') as HTMLElement;
       const target = e.target as Node;
       
-      if (container && !container.contains(target) && this.isPanelOpen()) {
+      if (container && !container.contains(target) && this.state.isPanelOpen) {
         this.closePanel();
       }
     }
@@ -547,34 +553,12 @@
       this.showToast(message);
     }
 
-    private scheduleAutoplay(): void {
-      if (this.autoplayAttempted) return;
-      this.autoplayAttempted = true;
-
-      // Try autoplay on next user interaction
-      const enableAutoplay = async () => {
-        try {
-          if (!this.state.isPlaying) {
-            await this.play();
-          }
-        } catch (error) {
-          console.log('Autoplay failed:', error);
-        }
-        
-        // Cleanup listeners
-        ['click', 'touchstart', 'keydown'].forEach(event => {
-          document.removeEventListener(event, enableAutoplay);
-        });
-      };
-
-      ['click', 'touchstart', 'keydown'].forEach(event => {
-        document.addEventListener(event, enableAutoplay, { once: true });
-      });
-    }
-
     // UI Update Methods
     private updateUI(): void {
-      this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
+      // Only update track info if a track is loaded
+      if (this.audio.src) {
+        this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
+      }
       this.updatePlayButton();
       this.updateControls();
       this.updateProgress();
@@ -663,9 +647,9 @@
       }
     }
 
-    // Panel Methods
+    // Panel Methods - FIXED
     private togglePanel(): void {
-      if (this.isPanelOpen()) {
+      if (this.state.isPanelOpen) {
         this.closePanel();
       } else {
         this.openPanel();
@@ -678,6 +662,9 @@
       
       if (!panel || !toggle) return;
       
+      // Update state first
+      this.state.isPanelOpen = true;
+      
       panel.classList.remove('music-panel--closed');
       panel.classList.add('music-panel--open');
       panel.setAttribute('aria-hidden', 'false');
@@ -686,7 +673,7 @@
       // Focus management
       const playBtn = this.elements.get('play-pause-btn') as HTMLElement;
       if (playBtn) {
-        playBtn.focus();
+        setTimeout(() => playBtn.focus(), 100);
       }
     }
 
@@ -696,15 +683,19 @@
       
       if (!panel || !toggle) return;
       
+      // Update state first
+      this.state.isPanelOpen = false;
+      
       panel.classList.remove('music-panel--open');
       panel.classList.add('music-panel--closed');
       panel.setAttribute('aria-hidden', 'true');
       toggle.setAttribute('aria-expanded', 'false');
     }
 
-    private isPanelOpen(): boolean {
-      const panel = this.elements.get('music-panel') as HTMLElement;
-      return panel?.classList.contains('music-panel--open') ?? false;
+    // ADDED: Ensure panel is closed on init
+    private ensurePanelClosed(): void {
+      this.state.isPanelOpen = false;
+      this.closePanel();
     }
 
     // Utility Methods
@@ -808,15 +799,18 @@
     background: var(--music-bg-dark);
   }
 
-  /* Panel states */
+  /* Panel states - FIXED: Ensure closed state is properly hidden */
   .music-panel--closed {
     @apply opacity-0 pointer-events-none translate-y-4 scale-95;
+    visibility: hidden; /* ADDED: Prevent any interaction */
   }
 
   .music-panel--open {
     @apply opacity-100 pointer-events-auto translate-y-0 scale-100;
+    visibility: visible; /* ADDED: Allow interaction */
   }
 
+  /* Rest of the styles remain the same... */
   /* Song info section */
   .song-info {
     @apply flex items-center gap-4 mb-6;
@@ -1121,5 +1115,20 @@
       transform: scale(1.2);
       opacity: 0;
     }
+  }
+
+  /* IMPORTANT: Initial state override */
+  #music-panel {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    visibility: hidden !important;
+    transform: translateY(1rem) scale(0.95) !important;
+  }
+
+  #music-panel.music-panel--open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    visibility: visible !important;
+    transform: translateY(0) scale(1) !important;
   }
 </style>
