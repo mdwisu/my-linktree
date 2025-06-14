@@ -2,7 +2,7 @@
 // MusicPlayer.astro
 ---
 
-<div class="fixed bottom-12 md:bottom-4 right-4 z-50" id="music-player-container">
+<div class="fixed bottom-4 right-4 z-50" id="music-player-container">
   <!-- Toggle Button with visual indicator -->
   <button
     id="music-toggle"
@@ -299,10 +299,12 @@ class HowlerMusicPlayer {
   private setupMobileOptimizations(): void {
     if (!this.isMobile) return;
 
+    console.log('📱 Applying mobile optimizations for scroll-resistant audio');
+
     // Mobile-specific audio context management
     this.setupAudioContextManagement();
     
-    // Mobile scroll handling
+    // Enhanced mobile scroll handling
     this.setupScrollHandling();
     
     // Visibility change handling for mobile
@@ -311,7 +313,88 @@ class HowlerMusicPlayer {
     // Page lifecycle handling
     this.setupPageLifecycleHandling();
 
-    console.log('📱 Mobile optimizations applied');
+    // Additional mobile-specific optimizations
+    this.setupMobileAudioOptimizations();
+  }
+
+  private setupMobileAudioOptimizations(): void {
+    // Prevent mobile audio interruption during scroll
+    if ('serviceWorker' in navigator) {
+      // Keep audio processing alive
+      navigator.serviceWorker.ready.then(() => {
+        console.log('🔧 Service worker ready for audio optimization');
+      });
+    }
+
+    // iOS-specific optimizations
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+      // iOS audio session management
+      document.addEventListener('touchstart', () => {
+        if (this.currentSound && (this.currentSound as any)._audioContext) {
+          const context = (this.currentSound as any)._audioContext;
+          // Pre-warm iOS audio
+          const buffer = context.createBuffer(1, 1, context.sampleRate);
+          const source = context.createBufferSource();
+          source.buffer = buffer;
+          source.connect(context.destination);
+          source.start(0);
+        }
+      }, { once: true, passive: true });
+    }
+
+    // Android-specific optimizations
+    if (/Android/.test(navigator.userAgent)) {
+      // Android audio focus management
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && this.isPlaying) {
+          // Reclaim audio focus on Android
+          setTimeout(() => {
+            this.gentleAudioCheck();
+          }, 200);
+        }
+      });
+    }
+
+    // General mobile performance optimizations
+    this.setupPerformanceOptimizations();
+  }
+
+  private setupPerformanceOptimizations(): void {
+    // Reduce CPU usage during audio playback
+    if (this.isMobile) {
+      // Throttle progress updates during scroll
+      let isThrottled = false;
+      
+      const originalUpdateProgress = this.updateProgress.bind(this);
+      this.updateProgress = () => {
+        if (isThrottled) return;
+        
+        isThrottled = true;
+        originalUpdateProgress();
+        
+        setTimeout(() => {
+          isThrottled = false;
+        }, 100);
+      };
+
+      // Optimize animations during scroll
+      let scrollAnimationId: number | null = null;
+      
+      document.addEventListener('scroll', () => {
+        if (scrollAnimationId) {
+          cancelAnimationFrame(scrollAnimationId);
+        }
+        
+        scrollAnimationId = requestAnimationFrame(() => {
+          // Reduced animation processing during scroll
+          document.body.style.setProperty('--scroll-performance', 'optimized');
+          
+          setTimeout(() => {
+            document.body.style.removeProperty('--scroll-performance');
+          }, 150);
+        });
+      }, { passive: true });
+    }
   }
 
   private setupAudioContextManagement(): void {
@@ -375,36 +458,144 @@ class HowlerMusicPlayer {
   }
 
   private setupScrollHandling(): void {
+    if (!this.isMobile) return;
+    
     let isScrolling = false;
+    let scrollEndTimer: number | null = null;
     
     const handleScroll = () => {
-      if (!this.isMobile || !this.isPlaying) return;
+      if (!this.isPlaying) return;
       
       const now = Date.now();
       this.lastScrollTime = now;
       
+      // Clear previous timer
+      if (scrollEndTimer) {
+        clearTimeout(scrollEndTimer);
+      }
+      
       if (!isScrolling) {
         isScrolling = true;
+        console.log('📱 Scroll started - monitoring audio');
+        
+        // Preemptively ensure audio context stays active
+        this.maintainAudioDuringScroll();
       }
       
-      // Clear existing timeout
-      if (this.scrollTimeout) {
-        clearTimeout(this.scrollTimeout);
-      }
-      
-      // Set timeout to handle end of scroll - increased delay and removed auto-recovery
-      this.scrollTimeout = window.setTimeout(() => {
+      // Set timer for scroll end detection
+      scrollEndTimer = window.setTimeout(() => {
         isScrolling = false;
-        // Only log, don't auto-recover during scroll
-        if (this.isPlaying && this.currentSound) {
-          console.log('📱 Scroll ended, audio state maintained');
-        }
-      }, 300); // Increased delay
+        console.log('📱 Scroll ended - checking audio state');
+        
+        // Quick verification without aggressive recovery
+        setTimeout(() => {
+          this.gentleAudioCheck();
+        }, 100);
+        
+      }, 200); // Wait for scroll to truly end
     };
 
-    // Use passive listeners for better performance
+    // Use passive listeners - critical for mobile performance
     document.addEventListener('scroll', handleScroll, { passive: true });
     document.addEventListener('touchmove', handleScroll, { passive: true });
+    
+    // Additional mobile scroll events
+    window.addEventListener('wheel', handleScroll, { passive: true });
+    window.addEventListener('touchscroll', handleScroll, { passive: true });
+  }
+
+  private maintainAudioDuringScroll(): void {
+    if (!this.currentSound || !this.isPlaying) return;
+    
+    try {
+      // Keep audio context alive during scroll
+      if ((this.currentSound as any)._audioContext) {
+        const context = (this.currentSound as any)._audioContext;
+        
+        if (context.state === 'running') {
+          // Create a silent buffer to keep context active
+          const buffer = context.createBuffer(1, 1, context.sampleRate);
+          const source = context.createBufferSource();
+          source.buffer = buffer;
+          source.connect(context.destination);
+          source.start(0);
+          
+          console.log('🔊 Audio context kept alive during scroll');
+        }
+      }
+      
+      // Gentle volume maintenance (prevents audio interruption)
+      const currentVolume = this.currentSound.volume();
+      this.currentSound.volume(currentVolume);
+      
+    } catch (error) {
+      console.warn('⚠️ Error maintaining audio during scroll:', error);
+    }
+  }
+
+  private gentleAudioCheck(): void {
+    if (!this.currentSound || !this.isPlaying) return;
+    
+    try {
+      const soundState = this.currentSound.state();
+      const isActuallyPlaying = (this.currentSound as any).playing && (this.currentSound as any).playing();
+      
+      console.log(`🔍 Gentle check - State: ${soundState}, Playing: ${isActuallyPlaying}`);
+      
+      if (soundState === 'loaded' && !isActuallyPlaying && this.isPlaying) {
+        console.log('🔧 Audio stopped during scroll, gentle recovery');
+        this.gentleRecovery();
+      }
+      
+    } catch (error) {
+      console.warn('⚠️ Error in gentle audio check:', error);
+    }
+  }
+
+  private async gentleRecovery(): Promise<void> {
+    if (this.retryCount > 0) {
+      console.log('🔄 Recovery already in progress');
+      return;
+    }
+    
+    try {
+      this.retryCount = 1; // Mark as recovering
+      
+      // Get current position before recovery
+      const currentSeek = this.currentSound?.seek() || 0;
+      
+      // Resume audio context if needed
+      if (this.currentSound && (this.currentSound as any)._audioContext) {
+        const context = (this.currentSound as any)._audioContext;
+        if (context.state === 'suspended') {
+          await context.resume();
+          console.log('🔊 Audio context resumed after scroll');
+        }
+      }
+      
+      // Gentle restart without stopping
+      if (this.currentSound) {
+        // Try to resume from current position
+        this.currentSound.seek(currentSeek);
+        this.currentSound.play();
+        
+        console.log('✅ Gentle recovery successful');
+        this.updateStatus('Playing');
+      }
+      
+      this.retryCount = 0; // Recovery complete
+      
+    } catch (error) {
+      console.warn('⚠️ Gentle recovery failed:', error);
+      this.retryCount = 0;
+      
+      // If gentle recovery fails, try one more time with full recovery
+      setTimeout(() => {
+        if (this.isPlaying && this.currentSound) {
+          this.verifyPlaybackState();
+        }
+      }, 1000);
+    }
   }
 
   private setupVisibilityHandling(): void {
@@ -839,11 +1030,24 @@ class HowlerMusicPlayer {
         preload: true,
         html5: this.isMobile, // Force HTML5 Audio for mobile
         pool: 1, // Strict pool limit
+        // Mobile-specific optimizations for scroll resistance
+        autoSuspend: false, // Prevent auto-suspend during scroll
+        autoplay: false, // Manual control
+        format: ['mp3', 'mpeg', 'opus', 'ogg', 'wav'], // Multiple format support
         onload: () => {
           console.log('✅ Track loaded successfully');
           this.updateStatus('Ready to play');
           this.updateTrackInfo(track);
           this.updateTotalTime();
+          
+          // Pre-warm audio context for mobile
+          if (this.isMobile && (this.currentSound as any)._audioContext) {
+            const context = (this.currentSound as any)._audioContext;
+            if (context.state === 'suspended') {
+              // Don't auto-resume here, wait for user interaction
+              console.log('🎯 Audio context ready for user interaction');
+            }
+          }
         },
         onloaderror: (id: number, error: any) => {
           console.error('❌ Load error:', error);
