@@ -137,6 +137,11 @@
   </div>
 </div>
 
+<!-- Raining Tacos Animation Container -->
+<div id="tacos-rain-container" class="tacos-rain-container hidden">
+  <!-- Tacos will be dynamically added here -->
+</div>
+
 <!-- Load Howler.js from CDN -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
 
@@ -194,6 +199,8 @@ class HowlerMusicPlayer {
   private progressInterval: number | null;
   private playlist: Track[];
   private elements: Elements;
+  private tacosRainInterval: number | null;
+  private activeTacos: HTMLElement[];
 
   constructor() {
     this.currentIndex = 0;
@@ -204,10 +211,12 @@ class HowlerMusicPlayer {
     this.volume = 0.5;
     this.currentSound = null;
     this.progressInterval = null;
+    this.tacosRainInterval = null;
+    this.activeTacos = [];
     
     // Playlist configuration
     this.playlist = [
-    {
+      {
               id: 'tacos-1',
               title: 'Raining Tacos',
               artist: 'Parry Gripp & BooneBum',
@@ -415,6 +424,7 @@ class HowlerMusicPlayer {
         this.showPlayingIndicator();
         this.updateStatus('Playing');
         this.startProgressTracking();
+        this.checkTacosRain(track);
       },
       onpause: () => {
         this.isPlaying = false;
@@ -422,6 +432,7 @@ class HowlerMusicPlayer {
         this.hidePlayingIndicator();
         this.updateStatus('Paused');
         this.stopProgressTracking();
+        this.stopTacosRain();
       },
       onstop: () => {
         this.isPlaying = false;
@@ -429,6 +440,7 @@ class HowlerMusicPlayer {
         this.hidePlayingIndicator();
         this.updateStatus('Stopped');
         this.stopProgressTracking();
+        this.stopTacosRain();
       },
       onend: () => {
         this.handleTrackEnded();
@@ -515,6 +527,7 @@ class HowlerMusicPlayer {
     this.isPlaying = false;
     this.updatePlayButton();
     this.hidePlayingIndicator();
+    this.stopTacosRain();
     
     // Auto-advance if user has interacted
     if (this.userHasInteracted) {
@@ -525,7 +538,7 @@ class HowlerMusicPlayer {
   private handleProgressClick(e: MouseEvent): void {
     if (!this.currentSound || !this.currentSound.duration()) return;
 
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const rect = e.currentTarget!.getBoundingClientRect();
     const percentage = (e.clientX - rect.left) / rect.width;
     const newTime = percentage * this.currentSound.duration();
     
@@ -549,8 +562,8 @@ class HowlerMusicPlayer {
   private updateProgress(): void {
     if (!this.currentSound) return;
     
-    const currentTime = Number(this.currentSound.seek()) || 0;
-    const duration = Number(this.currentSound.duration()) || 0;
+    const currentTime = this.currentSound.seek() || 0;
+    const duration = this.currentSound.duration() || 0;
     
     if (duration > 0) {
       const percentage = (currentTime / duration) * 100;
@@ -705,9 +718,106 @@ class HowlerMusicPlayer {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 
+  // Tacos Rain Animation Methods
+  private checkTacosRain(track: Track): void {
+    // Check if current track is "Raining Tacos"
+    if (track.id === 'tacos-1' || track.title.toLowerCase().includes('raining tacos')) {
+      this.startTacosRain();
+    } else {
+      this.stopTacosRain();
+    }
+  }
+
+  private startTacosRain(): void {
+    if (this.tacosRainInterval) return; // Already running
+
+    const container = document.getElementById('tacos-rain-container');
+    if (!container) return;
+
+    container.classList.remove('hidden');
+    
+    // Create tacos at intervals
+    this.tacosRainInterval = window.setInterval(() => {
+      this.createTaco();
+    }, 250); // Create a new taco every 250ms (even faster rain!)
+
+    console.log('🌮 It\'s raining tacos everywhere! 🌮');
+  }
+
+  private stopTacosRain(): void {
+    if (this.tacosRainInterval) {
+      clearInterval(this.tacosRainInterval);
+      this.tacosRainInterval = null;
+    }
+
+    const container = document.getElementById('tacos-rain-container');
+    if (container) {
+      container.classList.add('hidden');
+      // Clean up existing tacos
+      this.activeTacos.forEach(taco => {
+        if (taco.parentNode) {
+          taco.parentNode.removeChild(taco);
+        }
+      });
+      this.activeTacos = [];
+    }
+
+    console.log('🌮 Tacos rain stopped');
+  }
+
+  private createTaco(): void {
+    const container = document.getElementById('tacos-rain-container');
+    if (!container) return;
+
+    const taco = document.createElement('div');
+    taco.className = 'taco-falling';
+    
+    // Random taco emoji variations
+    const tacoEmojis = ['🌮', '🌯', '🥙', '🌮', '🌮', '🌮']; // More tacos!
+    taco.textContent = tacoEmojis[Math.floor(Math.random() * tacoEmojis.length)];
+    
+    // Random horizontal position across full screen width
+    const screenWidth = window.innerWidth;
+    const leftPosition = Math.random() * (screenWidth - 50); // Leave some margin
+    taco.style.left = `${leftPosition}px`;
+    taco.style.position = 'absolute';
+    
+    // Random animation duration (3-6 seconds for full fall)
+    const duration = 3 + Math.random() * 3;
+    taco.style.animationDuration = `${duration}s`;
+    taco.style.animationName = 'tacoFallWithDrift';
+    
+    // Random rotation
+    const rotation = Math.random() * 360;
+    taco.style.setProperty('--rotation', `${rotation}deg`);
+    
+    // Random size variation
+    const scale = 0.7 + Math.random() * 0.9; // 0.7 to 1.6
+    taco.style.setProperty('--scale', scale.toString());
+    
+    // Random horizontal drift
+    const drift = (Math.random() - 0.5) * 150; // -75px to +75px drift
+    taco.style.setProperty('--drift', `${drift}px`);
+    
+    container.appendChild(taco);
+    this.activeTacos.push(taco);
+    
+    // Remove taco after animation completes + buffer
+    setTimeout(() => {
+      if (taco.parentNode) {
+        taco.parentNode.removeChild(taco);
+      }
+      const index = this.activeTacos.indexOf(taco);
+      if (index > -1) {
+        this.activeTacos.splice(index, 1);
+      }
+    }, (duration + 1) * 1000); // Add 1 second buffer
+  }
+
   // Cleanup method
   public destroy(): void {
     this.stopProgressTracking();
+    this.stopTacosRain();
     if (this.currentSound) {
       this.currentSound.stop();
       this.currentSound.unload();
@@ -1023,5 +1133,131 @@ document.addEventListener('DOMContentLoaded', () => {
     pointer-events: auto !important;
     visibility: visible !important;
     transform: translateY(0) scale(1) !important;
+  }
+
+  /* Tacos Rain Animation Styles */
+  .tacos-rain-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 40;
+    overflow: hidden;
+    /* Debug: temporarily add border to see container */
+    /* border: 2px solid red; */
+  }
+
+  .tacos-rain-container.hidden {
+    display: none;
+  }
+
+  .taco-falling {
+    position: absolute;
+    top: -100px;
+    font-size: calc(32px * var(--scale, 1));
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+    animation: tacoFallWithDrift linear forwards;
+    transform: rotate(var(--rotation, 0deg));
+    z-index: 41;
+    text-shadow: 2px 2px 6px rgba(0,0,0,0.5);
+    filter: drop-shadow(0 0 8px rgba(255, 193, 7, 0.3));
+  }
+
+  @keyframes tacoFallWithDrift {
+    0% {
+      transform: translateY(-80px) translateX(0) rotate(var(--rotation, 0deg)) scale(var(--scale, 1));
+      opacity: 0;
+    }
+    5% {
+      opacity: 1;
+    }
+    95% {
+      opacity: 1;
+    }
+    100% {
+      transform: 
+        translateY(calc(100vh + 120px)) 
+        translateX(var(--drift, 0px)) 
+        rotate(calc(var(--rotation, 0deg) + 360deg)) 
+        scale(var(--scale, 1));
+      opacity: 0;
+    }
+  }
+
+  /* Add some sparkle/glitter effect */
+  .taco-falling::before {
+    content: '✨';
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    font-size: 12px;
+    animation: sparkle 1s ease-in-out infinite alternate;
+  }
+
+  .taco-falling::after {
+    content: '💫';
+    position: absolute;
+    bottom: -10px;
+    left: -10px;
+    font-size: 10px;
+    animation: sparkle 1.5s ease-in-out infinite alternate-reverse;
+  }
+
+  @keyframes sparkle {
+    0% {
+      opacity: 0.3;
+      transform: scale(0.8);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1.2);
+    }
+  }
+
+  /* Enhanced background effect when tacos are raining */
+  .tacos-rain-container:not(.hidden)::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 193, 7, 0.05) 0%,
+      rgba(255, 152, 0, 0.03) 50%,
+      rgba(255, 87, 34, 0.02) 100%
+    );
+    pointer-events: none;
+    z-index: 39;
+  }
+
+  /* Add some floating taco clouds */
+  .tacos-rain-container:not(.hidden)::after {
+    content: '☁️🌮 ☁️🌯 ☁️🥙 ☁️🌮';
+    position: fixed;
+    top: 10px;
+    left: 0;
+    width: 100vw;
+    text-align: center;
+    font-size: 20px;
+    opacity: 0.8;
+    animation: float 4s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 40;
+    letter-spacing: 40px;
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
   }
 </style>
