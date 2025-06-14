@@ -1,0 +1,1125 @@
+---
+// Modern music player with proper error handling and accessibility
+---
+
+<div class="fixed bottom-4 right-4 z-50" id="music-player-container">
+  <!-- Toggle Button -->
+  <button
+    id="music-toggle"
+    type="button"
+    class="music-toggle-btn"
+    aria-label="Toggle music player"
+    aria-expanded="false"
+    aria-controls="music-panel"
+  >
+    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+    </svg>
+    <span class="sr-only">Music Player</span>
+  </button>
+
+  <!-- Music Player Panel -->
+  <div
+    id="music-panel"
+    class="music-panel"
+    role="dialog"
+    aria-label="Music player controls"
+    aria-hidden="true"
+  >
+    <!-- Current Song Info -->
+    <div class="song-info">
+      <div class="album-art">
+        <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+        </svg>
+      </div>
+      <div class="song-details">
+        <h4 id="song-title" class="song-title" aria-live="polite">
+          Select a track
+        </h4>
+        <p id="song-artist" class="song-artist" aria-live="polite">
+          No artist
+        </p>
+      </div>
+    </div>
+
+    <!-- Progress Section -->
+    <div class="progress-section">
+      <div class="time-display">
+        <time id="current-time" class="time-text">0:00</time>
+        <time id="total-time" class="time-text">0:00</time>
+      </div>
+      <div 
+        id="progress-container" 
+        class="progress-container"
+        role="slider"
+        aria-label="Seek position"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+        tabindex="0"
+      >
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+    </div>
+
+    <!-- Control Buttons -->
+    <div class="controls-section" role="group" aria-label="Playback controls">
+      <button
+        id="prev-btn"
+        type="button"
+        class="control-btn"
+        aria-label="Previous track"
+        disabled
+      >
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+        </svg>
+      </button>
+
+      <button
+        id="play-pause-btn"
+        type="button"
+        class="play-pause-btn"
+        aria-label="Play"
+        data-state="paused"
+      >
+        <svg id="play-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+        <svg id="pause-icon" class="w-6 h-6 hidden" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+        </svg>
+      </button>
+
+      <button
+        id="next-btn"
+        type="button"
+        class="control-btn"
+        aria-label="Next track"
+        disabled
+      >
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Volume Control -->
+    <div class="volume-section">
+      <label for="volume-slider" class="sr-only">Volume control</label>
+      <svg class="volume-icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+      </svg>
+      <input
+        type="range"
+        id="volume-slider"
+        class="volume-slider"
+        min="0"
+        max="100"
+        value="70"
+        step="1"
+        aria-label="Volume"
+      />
+    </div>
+
+    <!-- Status Display -->
+    <div class="status-section">
+      <span id="music-status" class="status-text" aria-live="polite" aria-atomic="true">
+        Ready to play
+      </span>
+    </div>
+  </div>
+</div>
+
+<!-- Audio Element with proper attributes -->
+<audio 
+  id="audio-player"
+  preload="none"
+  crossorigin="anonymous"
+  aria-hidden="true"
+></audio>
+
+<script>
+  // Types for better development experience
+  interface Track {
+    readonly id: string;
+    readonly title: string;
+    readonly artist: string;
+    readonly src: string;
+    readonly duration?: number;
+  }
+
+  interface PlayerState {
+    isPlaying: boolean;
+    currentTrackIndex: number;
+    volume: number;
+    currentTime: number;
+    duration: number;
+    isLoading: boolean;
+    hasError: boolean;
+  }
+
+  class MusicPlayer {
+    private readonly audio: HTMLAudioElement;
+    private readonly elements: Map<string, Element | null> = new Map();
+    private readonly eventAbortController = new AbortController();
+    private state: PlayerState;
+    private autoplayAttempted = false;
+    
+    // Configuration
+    private readonly config = {
+      maxRetries: 3,
+      fadeOutDuration: 500,
+      autoplay: true,
+      preloadNext: true,
+      saveVolume: true
+    };
+    
+    private readonly playlist: readonly Track[] = [
+      {
+        id: 'tacos-1',
+        title: 'Raining Tacos',
+        artist: 'Parry Gripp & Boonebum',
+        src: '/music/raining-tacos.mp3',
+        duration: 180
+      },
+      {
+        id: 'lofi-1',
+        title: 'Lofi Hip Hop Beat',
+        artist: 'Chill Vibes',
+        src: '/music/lofi-beat.mp3',
+        duration: 180
+      },
+    ];
+
+    constructor() {
+      // Initialize audio element
+      const audioElement = document.getElementById('audio-player');
+      if (!audioElement || !(audioElement instanceof HTMLAudioElement)) {
+        throw new Error('Audio element not found or invalid');
+      }
+      this.audio = audioElement;
+
+      // Initialize state
+      this.state = {
+        isPlaying: false,
+        currentTrackIndex: 0,
+        volume: this.loadSavedVolume(),
+        currentTime: 0,
+        duration: 0,
+        isLoading: false,
+        hasError: false
+      };
+
+      this.init();
+    }
+
+    private async init(): Promise<void> {
+      try {
+        this.cacheElements();
+        this.setupEventListeners();
+        this.setupAudioEventListeners();
+        this.setupKeyboardNavigation();
+        await this.loadTrack(this.state.currentTrackIndex);
+        this.updateUI();
+        
+        // Attempt autoplay after user gesture
+        if (this.config.autoplay) {
+          this.scheduleAutoplay();
+        }
+        
+      } catch (error) {
+        console.error('Failed to initialize music player:', error);
+        this.handleError('Failed to initialize player');
+      }
+    }
+
+    private cacheElements(): void {
+      const elementIds = [
+        'music-toggle', 'music-panel', 'song-title', 'song-artist',
+        'current-time', 'total-time', 'progress-container', 'progress-bar',
+        'prev-btn', 'play-pause-btn', 'next-btn', 'volume-slider',
+        'music-status', 'play-icon', 'pause-icon'
+      ];
+
+      elementIds.forEach(id => {
+        this.elements.set(id, document.getElementById(id));
+      });
+    }
+
+    private setupEventListeners(): void {
+      const { signal } = this.eventAbortController;
+
+      // Panel toggle
+      this.addEventListenerSafely('music-toggle', 'click', () => {
+        this.togglePanel();
+      }, { signal });
+
+      // Playback controls
+      this.addEventListenerSafely('play-pause-btn', 'click', (e) => {
+        e.preventDefault();
+        this.togglePlayback();
+      }, { signal });
+
+      this.addEventListenerSafely('prev-btn', 'click', () => {
+        this.previousTrack();
+      }, { signal });
+
+      this.addEventListenerSafely('next-btn', 'click', () => {
+        this.nextTrack();
+      }, { signal });
+
+      // Volume control
+      this.addEventListenerSafely('volume-slider', 'input', (e) => {
+        const target = e.target as HTMLInputElement;
+        this.setVolume(Number(target.value));
+      }, { signal });
+
+      // Progress control
+      this.addEventListenerSafely('progress-container', 'click', (e) => {
+        this.handleProgressClick(e as MouseEvent);
+      }, { signal });
+
+      // Close panel on outside click
+      document.addEventListener('click', (e) => {
+        this.handleOutsideClick(e);
+      }, { signal });
+
+      // Visibility change handling
+      document.addEventListener('visibilitychange', () => {
+        this.handleVisibilityChange();
+      }, { signal });
+    }
+
+    private setupAudioEventListeners(): void {
+      const { signal } = this.eventAbortController;
+      
+      const audioEvents = {
+        'loadstart': () => this.updateStatus('Loading...'),
+        'loadedmetadata': () => this.handleLoadedMetadata(),
+        'canplay': () => this.handleCanPlay(),
+        'timeupdate': () => this.handleTimeUpdate(),
+        'ended': () => this.handleTrackEnded(),
+        'error': (e: Event) => this.handleAudioError(e),
+        'stalled': () => this.updateStatus('Connection issues...'),
+        'waiting': () => this.updateStatus('Buffering...'),
+        'playing': () => this.handlePlaying(),
+        'pause': () => this.handlePaused()
+      };
+
+      Object.entries(audioEvents).forEach(([event, handler]) => {
+        this.audio.addEventListener(event, handler, { signal });
+      });
+    }
+
+    private setupKeyboardNavigation(): void {
+      const { signal } = this.eventAbortController;
+      
+      document.addEventListener('keydown', (e) => {
+        if (e.target instanceof HTMLInputElement) return;
+        
+        switch (e.code) {
+          case 'Space':
+            if (this.isPanelOpen()) {
+              e.preventDefault();
+              this.togglePlayback();
+            }
+            break;
+          case 'ArrowLeft':
+            if (this.isPanelOpen()) {
+              e.preventDefault();
+              this.previousTrack();
+            }
+            break;
+          case 'ArrowRight':
+            if (this.isPanelOpen()) {
+              e.preventDefault();
+              this.nextTrack();
+            }
+            break;
+          case 'Escape':
+            if (this.isPanelOpen()) {
+              this.closePanel();
+            }
+            break;
+        }
+      }, { signal });
+    }
+
+    private addEventListenerSafely(
+      elementId: string, 
+      event: string, 
+      handler: EventListener, 
+      options?: AddEventListenerOptions
+    ): void {
+      const element = this.elements.get(elementId);
+      if (element) {
+        element.addEventListener(event, handler, options);
+      }
+    }
+
+    private async loadTrack(index: number): Promise<void> {
+      if (index < 0 || index >= this.playlist.length) {
+        throw new Error(`Invalid track index: ${index}`);
+      }
+
+      const track = this.playlist[index];
+      this.state.currentTrackIndex = index;
+      this.state.isLoading = true;
+      this.state.hasError = false;
+
+      try {
+        // Reset audio state
+        this.audio.pause();
+        this.audio.currentTime = 0;
+        this.audio.src = track.src;
+        this.audio.volume = this.state.volume / 100;
+
+        // Update UI immediately
+        this.updateTrackInfo(track);
+        this.updateControls();
+        
+        // Start loading
+        this.audio.load();
+        
+      } catch (error) {
+        console.error('Failed to load track:', error);
+        this.handleError(`Failed to load: ${track.title}`);
+      }
+    }
+
+    private async togglePlayback(): Promise<void> {
+      try {
+        if (this.state.isPlaying) {
+          await this.pause();
+        } else {
+          await this.play();
+        }
+      } catch (error) {
+        console.error('Playback toggle failed:', error);
+        this.handleError('Playback failed');
+      }
+    }
+
+    private async play(): Promise<void> {
+      if (this.state.hasError) {
+        await this.loadTrack(this.state.currentTrackIndex);
+      }
+
+      try {
+        await this.audio.play();
+        this.state.isPlaying = true;
+        this.updatePlayButton();
+        this.updateStatus('Playing');
+      } catch (error) {
+        console.error('Play failed:', error);
+        
+        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+          this.updateStatus('Click to enable audio');
+        } else {
+          this.handleError('Playback failed');
+        }
+        throw error;
+      }
+    }
+
+    private async pause(): Promise<void> {
+      this.audio.pause();
+      this.state.isPlaying = false;
+      this.updatePlayButton();
+      this.updateStatus('Paused');
+    }
+
+    private async previousTrack(): Promise<void> {
+      const newIndex = this.state.currentTrackIndex > 0 
+        ? this.state.currentTrackIndex - 1 
+        : this.playlist.length - 1;
+      
+      await this.loadTrack(newIndex);
+      
+      if (this.state.isPlaying) {
+        await this.play();
+      }
+    }
+
+    private async nextTrack(): Promise<void> {
+      const newIndex = (this.state.currentTrackIndex + 1) % this.playlist.length;
+      await this.loadTrack(newIndex);
+      
+      if (this.state.isPlaying) {
+        await this.play();
+      }
+    }
+
+    private setVolume(volume: number): void {
+      const clampedVolume = Math.max(0, Math.min(100, volume));
+      this.state.volume = clampedVolume;
+      this.audio.volume = clampedVolume / 100;
+      
+      if (this.config.saveVolume) {
+        localStorage.setItem('musicPlayerVolume', clampedVolume.toString());
+      }
+    }
+
+    private loadSavedVolume(): number {
+      if (!this.config.saveVolume) return 70;
+      
+      const saved = localStorage.getItem('musicPlayerVolume');
+      return saved ? Math.max(0, Math.min(100, Number(saved))) : 70;
+    }
+
+    private handleProgressClick(e: MouseEvent): void {
+      if (!this.audio.duration) return;
+
+      const container = e.currentTarget as HTMLElement;
+      const rect = container.getBoundingClientRect();
+      const percentage = (e.clientX - rect.left) / rect.width;
+      const newTime = percentage * this.audio.duration;
+      
+      this.audio.currentTime = Math.max(0, Math.min(this.audio.duration, newTime));
+    }
+
+    private handleLoadedMetadata(): void {
+      this.state.duration = this.audio.duration || 0;
+      this.state.isLoading = false;
+      this.updateDuration();
+      this.updateControls();
+      this.updateStatus('Ready to play');
+    }
+
+    private handleCanPlay(): void {
+      this.state.isLoading = false;
+      this.updateStatus('Ready');
+    }
+
+    private handleTimeUpdate(): void {
+      this.state.currentTime = this.audio.currentTime;
+      this.updateProgress();
+    }
+
+    private async handleTrackEnded(): Promise<void> {
+      this.state.isPlaying = false;
+      this.updatePlayButton();
+      
+      // Auto-advance to next track
+      await this.nextTrack();
+    }
+
+    private handleAudioError(e: Event): void {
+      console.error('Audio error:', e);
+      this.state.hasError = true;
+      this.state.isPlaying = false;
+      this.state.isLoading = false;
+      this.updatePlayButton();
+      this.handleError('Failed to load audio');
+    }
+
+    private handlePlaying(): void {
+      this.state.isPlaying = true;
+      this.updatePlayButton();
+    }
+
+    private handlePaused(): void {
+      this.state.isPlaying = false;
+      this.updatePlayButton();
+    }
+
+    private handleOutsideClick(e: Event): void {
+      const container = this.elements.get('music-player-container') as HTMLElement;
+      const target = e.target as Node;
+      
+      if (container && !container.contains(target) && this.isPanelOpen()) {
+        this.closePanel();
+      }
+    }
+
+    private handleVisibilityChange(): void {
+      if (document.hidden && this.state.isPlaying) {
+        // Optionally pause when tab is hidden
+        // this.pause();
+      }
+    }
+
+    private handleError(message: string): void {
+      this.state.hasError = true;
+      this.updateStatus(`Error: ${message}`);
+      this.showToast(message);
+    }
+
+    private scheduleAutoplay(): void {
+      if (this.autoplayAttempted) return;
+      this.autoplayAttempted = true;
+
+      // Try autoplay on next user interaction
+      const enableAutoplay = async () => {
+        try {
+          if (!this.state.isPlaying) {
+            await this.play();
+          }
+        } catch (error) {
+          console.log('Autoplay failed:', error);
+        }
+        
+        // Cleanup listeners
+        ['click', 'touchstart', 'keydown'].forEach(event => {
+          document.removeEventListener(event, enableAutoplay);
+        });
+      };
+
+      ['click', 'touchstart', 'keydown'].forEach(event => {
+        document.addEventListener(event, enableAutoplay, { once: true });
+      });
+    }
+
+    // UI Update Methods
+    private updateUI(): void {
+      this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
+      this.updatePlayButton();
+      this.updateControls();
+      this.updateProgress();
+      this.updateVolume();
+    }
+
+    private updateTrackInfo(track: Track): void {
+      const titleEl = this.elements.get('song-title') as HTMLElement;
+      const artistEl = this.elements.get('song-artist') as HTMLElement;
+      
+      if (titleEl) titleEl.textContent = track.title;
+      if (artistEl) artistEl.textContent = track.artist;
+    }
+
+    private updatePlayButton(): void {
+      const playBtn = this.elements.get('play-pause-btn') as HTMLButtonElement;
+      const playIcon = this.elements.get('play-icon') as HTMLElement;
+      const pauseIcon = this.elements.get('pause-icon') as HTMLElement;
+      
+      if (!playBtn || !playIcon || !pauseIcon) return;
+      
+      const isPlaying = this.state.isPlaying;
+      
+      playBtn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
+      playBtn.setAttribute('data-state', isPlaying ? 'playing' : 'paused');
+      
+      playIcon.classList.toggle('hidden', isPlaying);
+      pauseIcon.classList.toggle('hidden', !isPlaying);
+    }
+
+    private updateControls(): void {
+      const prevBtn = this.elements.get('prev-btn') as HTMLButtonElement;
+      const nextBtn = this.elements.get('next-btn') as HTMLButtonElement;
+      
+      if (prevBtn) {
+        prevBtn.disabled = this.playlist.length <= 1;
+      }
+      
+      if (nextBtn) {
+        nextBtn.disabled = this.playlist.length <= 1;
+      }
+    }
+
+    private updateProgress(): void {
+      if (!this.state.duration) return;
+      
+      const percentage = (this.state.currentTime / this.state.duration) * 100;
+      const progressBar = this.elements.get('progress-bar') as HTMLElement;
+      const currentTimeEl = this.elements.get('current-time') as HTMLElement;
+      const progressContainer = this.elements.get('progress-container') as HTMLElement;
+      
+      if (progressBar) {
+        progressBar.style.width = `${percentage}%`;
+      }
+      
+      if (currentTimeEl) {
+        currentTimeEl.textContent = this.formatTime(this.state.currentTime);
+      }
+      
+      if (progressContainer) {
+        progressContainer.setAttribute('aria-valuenow', percentage.toString());
+      }
+    }
+
+    private updateDuration(): void {
+      const totalTimeEl = this.elements.get('total-time') as HTMLElement;
+      
+      if (totalTimeEl) {
+        totalTimeEl.textContent = this.formatTime(this.state.duration);
+      }
+    }
+
+    private updateVolume(): void {
+      const volumeSlider = this.elements.get('volume-slider') as HTMLInputElement;
+      
+      if (volumeSlider) {
+        volumeSlider.value = this.state.volume.toString();
+      }
+    }
+
+    private updateStatus(message: string): void {
+      const statusEl = this.elements.get('music-status') as HTMLElement;
+      
+      if (statusEl) {
+        statusEl.textContent = message;
+      }
+    }
+
+    // Panel Methods
+    private togglePanel(): void {
+      if (this.isPanelOpen()) {
+        this.closePanel();
+      } else {
+        this.openPanel();
+      }
+    }
+
+    private openPanel(): void {
+      const panel = this.elements.get('music-panel') as HTMLElement;
+      const toggle = this.elements.get('music-toggle') as HTMLElement;
+      
+      if (!panel || !toggle) return;
+      
+      panel.classList.remove('music-panel--closed');
+      panel.classList.add('music-panel--open');
+      panel.setAttribute('aria-hidden', 'false');
+      toggle.setAttribute('aria-expanded', 'true');
+      
+      // Focus management
+      const playBtn = this.elements.get('play-pause-btn') as HTMLElement;
+      if (playBtn) {
+        playBtn.focus();
+      }
+    }
+
+    private closePanel(): void {
+      const panel = this.elements.get('music-panel') as HTMLElement;
+      const toggle = this.elements.get('music-toggle') as HTMLElement;
+      
+      if (!panel || !toggle) return;
+      
+      panel.classList.remove('music-panel--open');
+      panel.classList.add('music-panel--closed');
+      panel.setAttribute('aria-hidden', 'true');
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+
+    private isPanelOpen(): boolean {
+      const panel = this.elements.get('music-panel') as HTMLElement;
+      return panel?.classList.contains('music-panel--open') ?? false;
+    }
+
+    // Utility Methods
+    private formatTime(seconds: number): string {
+      if (!seconds || isNaN(seconds)) return '0:00';
+      
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    private showToast(message: string): void {
+      // Remove existing toasts
+      document.querySelectorAll('.music-toast').forEach(toast => toast.remove());
+      
+      const toast = document.createElement('div');
+      toast.className = 'music-toast';
+      toast.textContent = message;
+      toast.setAttribute('role', 'alert');
+      toast.setAttribute('aria-live', 'assertive');
+      
+      document.body.appendChild(toast);
+      
+      // Auto-remove
+      setTimeout(() => {
+        toast.remove();
+      }, 4000);
+    }
+
+    // Cleanup
+    public destroy(): void {
+      this.eventAbortController.abort();
+      this.audio.pause();
+      this.audio.src = '';
+    }
+  }
+
+  // Initialize player when DOM is ready
+  let musicPlayer: MusicPlayer | null = null;
+
+  document.addEventListener('DOMContentLoaded', () => {
+    try {
+      musicPlayer = new MusicPlayer();
+    } catch (error) {
+      console.error('Failed to initialize music player:', error);
+    }
+  });
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    musicPlayer?.destroy();
+  });
+
+  // Global access for debugging
+  if (import.meta.env.DEV) {
+    (window as any).musicPlayer = musicPlayer;
+  }
+</script>
+
+<style>
+  /* Base styles with CSS custom properties */
+  :root {
+    --music-primary: #8b5cf6;
+    --music-secondary: #ec4899;
+    --music-bg: rgba(255, 255, 255, 0.95);
+    --music-bg-dark: rgba(31, 41, 55, 0.95);
+    --music-text: #1f2937;
+    --music-text-dark: #f9fafb;
+    --music-text-muted: #6b7280;
+    --music-text-muted-dark: #9ca3af;
+    --music-border: rgba(255, 255, 255, 0.2);
+    --music-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    --music-backdrop: blur(16px);
+    --music-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Toggle button */
+  .music-toggle-btn {
+    @apply w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white;
+    @apply hover:scale-110 focus:scale-110 focus:outline-none focus:ring-4 focus:ring-purple-500/30;
+    @apply transition-all duration-300 ease-out;
+    background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+  }
+
+  .music-toggle-btn:hover,
+  .music-toggle-btn:focus {
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  }
+
+  /* Panel base */
+  .music-panel {
+    @apply absolute bottom-16 right-0 w-80 rounded-2xl p-6 border backdrop-blur-lg;
+    @apply transition-all duration-300 ease-out transform;
+    background: var(--music-bg);
+    border-color: var(--music-border);
+    box-shadow: var(--music-shadow);
+    backdrop-filter: var(--music-backdrop);
+  }
+
+  .dark .music-panel {
+    background: var(--music-bg-dark);
+  }
+
+  /* Panel states */
+  .music-panel--closed {
+    @apply opacity-0 pointer-events-none translate-y-4 scale-95;
+  }
+
+  .music-panel--open {
+    @apply opacity-100 pointer-events-auto translate-y-0 scale-100;
+  }
+
+  /* Song info section */
+  .song-info {
+    @apply flex items-center gap-4 mb-6;
+  }
+
+  .album-art {
+    @apply w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0;
+    background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+  }
+
+  .song-details {
+    @apply flex-1 min-w-0;
+  }
+
+  .song-title {
+    @apply font-semibold text-base truncate mb-1;
+    color: var(--music-text);
+  }
+
+  .dark .song-title {
+    color: var(--music-text-dark);
+  }
+
+  .song-artist {
+    @apply text-sm truncate;
+    color: var(--music-text-muted);
+  }
+
+  .dark .song-artist {
+    color: var(--music-text-muted-dark);
+  }
+
+  /* Progress section */
+  .progress-section {
+    @apply mb-6;
+  }
+
+  .time-display {
+    @apply flex items-center justify-between text-xs mb-2;
+    color: var(--music-text-muted);
+  }
+
+  .dark .time-display {
+    color: var(--music-text-muted-dark);
+  }
+
+  .time-text {
+    @apply font-mono;
+  }
+
+  .progress-container {
+    @apply w-full h-3 bg-gray-200 dark:bg-gray-700 rounded-full cursor-pointer relative;
+    @apply focus:outline-none focus:ring-2 focus:ring-purple-500/50;
+    @apply transition-all duration-200;
+  }
+
+  .progress-container:hover {
+    @apply bg-gray-300 dark:bg-gray-600;
+  }
+
+  .progress-bar {
+    @apply h-full rounded-full transition-all duration-300 relative;
+    background: linear-gradient(90deg, var(--music-primary), var(--music-secondary));
+    width: 0%;
+  }
+
+  .progress-bar::after {
+    content: '';
+    @apply absolute right-0 top-1/2 w-3 h-3 bg-white rounded-full shadow-md;
+    @apply transform -translate-y-1/2 translate-x-1/2 opacity-0 transition-opacity duration-200;
+  }
+
+  .progress-container:hover .progress-bar::after,
+  .progress-container:focus .progress-bar::after {
+    @apply opacity-100;
+  }
+
+  /* Controls section */
+  .controls-section {
+    @apply flex items-center justify-center gap-4 mb-6;
+  }
+
+  .control-btn {
+    @apply w-10 h-10 flex items-center justify-center rounded-full;
+    @apply hover:bg-gray-100 dark:hover:bg-gray-700 focus:bg-gray-100 dark:focus:bg-gray-700;
+    @apply focus:outline-none focus:ring-2 focus:ring-purple-500/50;
+    @apply transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+    color: var(--music-text-muted);
+  }
+
+  .dark .control-btn {
+    color: var(--music-text-muted-dark);
+  }
+
+  .control-btn:not(:disabled):hover,
+  .control-btn:not(:disabled):focus {
+    color: var(--music-primary);
+  }
+
+  .play-pause-btn {
+    @apply w-12 h-12 rounded-full flex items-center justify-center text-white;
+    @apply hover:scale-105 focus:scale-105 focus:outline-none focus:ring-4 focus:ring-purple-500/30;
+    @apply transition-all duration-200;
+    background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+  }
+
+  .play-pause-btn:hover,
+  .play-pause-btn:focus {
+    box-shadow: 0 10px 25px -5px rgba(139, 92, 246, 0.4);
+  }
+
+  /* Volume section */
+  .volume-section {
+    @apply flex items-center gap-3 mb-4;
+  }
+
+  .volume-icon {
+    @apply w-4 h-4 flex-shrink-0;
+    color: var(--music-text-muted);
+  }
+
+  .dark .volume-icon {
+    color: var(--music-text-muted-dark);
+  }
+
+  .volume-slider {
+    @apply flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer;
+    @apply focus:outline-none focus:ring-2 focus:ring-purple-500/50;
+    @apply transition-all duration-200;
+  }
+
+  .volume-slider::-webkit-slider-thumb {
+    @apply appearance-none w-4 h-4 rounded-full cursor-pointer;
+    @apply transition-all duration-200 hover:scale-110;
+    background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+  }
+
+  .volume-slider::-moz-range-thumb {
+    @apply w-4 h-4 rounded-full cursor-pointer border-0;
+    @apply transition-all duration-200;
+    background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+  }
+
+  .volume-slider::-webkit-slider-track {
+    @apply bg-gray-200 dark:bg-gray-700 h-2 rounded-lg;
+  }
+
+  .volume-slider::-moz-range-track {
+    @apply bg-gray-200 dark:bg-gray-700 h-2 rounded-lg border-0;
+  }
+
+  /* Status section */
+  .status-section {
+    @apply text-center;
+  }
+
+  .status-text {
+    @apply text-xs font-medium;
+    color: var(--music-text-muted);
+  }
+
+  .dark .status-text {
+    color: var(--music-text-muted-dark);
+  }
+
+  /* Toast notifications */
+  .music-toast {
+    @apply fixed bottom-20 right-4 bg-gray-900 dark:bg-gray-800 text-white;
+    @apply px-4 py-3 rounded-lg shadow-lg z-50 text-sm max-w-xs;
+    @apply animate-slide-up opacity-0;
+    animation: slideUpFade 0.3s ease-out forwards, fadeOut 0.3s ease-out 3.7s forwards;
+  }
+
+  /* Screen reader only content */
+  .sr-only {
+    @apply absolute w-px h-px p-0 -m-px overflow-hidden whitespace-nowrap border-0;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  /* Animations */
+  @keyframes slideUpFade {
+    from {
+      transform: translateY(1rem);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes fadeOut {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  /* Mobile responsive adjustments */
+  @media (max-width: 640px) {
+    .music-panel {
+      @apply w-72 right-2;
+    }
+    
+    .music-toggle-btn {
+      @apply w-12 h-12;
+    }
+    
+    .music-toggle-btn svg {
+      @apply w-5 h-5;
+    }
+  }
+
+  /* High contrast mode support */
+  @media (prefers-contrast: high) {
+    .music-panel {
+      @apply border-2 border-gray-900 dark:border-white;
+    }
+    
+    .progress-bar {
+      background: #000;
+    }
+    
+    .dark .progress-bar {
+      background: #fff;
+    }
+  }
+
+  /* Reduced motion support */
+  @media (prefers-reduced-motion: reduce) {
+    .music-toggle-btn,
+    .play-pause-btn,
+    .control-btn,
+    .music-panel,
+    .progress-bar,
+    .volume-slider {
+      @apply transition-none;
+    }
+    
+    .music-toast {
+      animation: none;
+      @apply opacity-100;
+    }
+  }
+
+  /* Focus visible improvements */
+  .music-toggle-btn:focus-visible,
+  .play-pause-btn:focus-visible,
+  .control-btn:focus-visible {
+    @apply ring-2 ring-purple-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-800;
+  }
+
+  .progress-container:focus-visible,
+  .volume-slider:focus-visible {
+    @apply ring-2 ring-purple-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-800;
+  }
+
+  /* Loading states */
+  .music-panel[data-loading="true"] .song-title::after {
+    content: "";
+    @apply inline-block w-2 h-2 ml-2 bg-purple-500 rounded-full;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+
+  /* Error states */
+  .music-panel[data-error="true"] {
+    @apply border-red-200 dark:border-red-800;
+  }
+
+  .music-panel[data-error="true"] .status-text {
+    @apply text-red-600 dark:text-red-400;
+  }
+
+  /* Playing indicator */
+  .play-pause-btn[data-state="playing"]::before {
+    content: "";
+    @apply absolute inset-0 rounded-full;
+    background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+    animation: ripple 2s ease-out infinite;
+    z-index: -1;
+  }
+
+  @keyframes ripple {
+    0% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1.2);
+      opacity: 0;
+    }
+  }
+</style>

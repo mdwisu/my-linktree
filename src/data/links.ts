@@ -54,7 +54,7 @@ export const links: LinkItem[] = [
   {
     id: "twitter",
     title: "Twitter",
-    url: "https://twitter.com/yourusername",
+    url: "https://twitter.com/Mdwis_",
     description: "Thoughts and updates",
     icon: "twitter",
     category: "social",
@@ -69,12 +69,12 @@ export const socialLinks = [
   },
   {
     name: "YouTube",
-    url: "https://youtube.com/@yourusername",
+    url: "https://youtube.com/@muhammaddwisusanto5925",
     icon: "youtube",
   },
-  {
-    name: "Dribbble",
-    url: "https://dribbble.com/yourusername",
-    icon: "dribbble",
-  },
+  // {
+  //   name: "Dribbble",
+  //   url: "https://dribbble.com/yourusername",
+  //   icon: "dribbble",
+  // },
 ];
