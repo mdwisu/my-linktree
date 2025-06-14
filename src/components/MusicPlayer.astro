@@ -1,10 +1,9 @@
 ---
-// Modern music player with proper error handling and accessibility
-// Panel stays CLOSED by default
+// Fixed music player with proper autoplay handling
 ---
 
 <div class="fixed bottom-4 right-4 z-50" id="music-player-container">
-  <!-- Toggle Button -->
+  <!-- Toggle Button with visual indicator -->
   <button
     id="music-toggle"
     type="button"
@@ -16,10 +15,12 @@
     <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
     </svg>
+    <!-- Playing indicator -->
+    <div id="playing-indicator" class="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse hidden"></div>
     <span class="sr-only">Music Player</span>
   </button>
 
-  <!-- Music Player Panel - STARTS CLOSED -->
+  <!-- Music Player Panel -->
   <div
     id="music-panel"
     class="music-panel music-panel--closed"
@@ -36,10 +37,10 @@
       </div>
       <div class="song-details">
         <h4 id="song-title" class="song-title" aria-live="polite">
-          Select a track
+          Click play to start
         </h4>
         <p id="song-artist" class="song-artist" aria-live="polite">
-          No artist
+          Music ready
         </p>
       </div>
     </div>
@@ -71,7 +72,6 @@
         type="button"
         class="control-btn"
         aria-label="Previous track"
-        disabled
       >
         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
@@ -82,7 +82,7 @@
         id="play-pause-btn"
         type="button"
         class="play-pause-btn"
-        aria-label="Play"
+        aria-label="Play music"
         data-state="paused"
       >
         <svg id="play-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -98,7 +98,6 @@
         type="button"
         class="control-btn"
         aria-label="Next track"
-        disabled
       >
         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
@@ -118,7 +117,7 @@
         class="volume-slider"
         min="0"
         max="100"
-        value="70"
+        value="50"
         step="1"
         aria-label="Volume"
       />
@@ -130,19 +129,30 @@
         Ready to play
       </span>
     </div>
+
+    <!-- Autoplay Info -->
+    <div id="autoplay-info" class="text-xs text-center mt-2 text-gray-500 dark:text-gray-400 hidden">
+      Click play button to start music
+    </div>
   </div>
 </div>
 
-<!-- Audio Element with autoplay attributes -->
+<!-- Audio Element -->
 <audio 
   id="audio-player"
-  preload="auto"
+  preload="metadata"
   crossorigin="anonymous"
   aria-hidden="true"
 ></audio>
 
 <script>
-  // Types for better development experience
+  // Declare window type extension
+  declare global {
+    interface Window {
+      checkAudioFiles: () => Promise<void>;
+    }
+  }
+
   interface Track {
     readonly id: string;
     readonly title: string;
@@ -159,7 +169,9 @@
     duration: number;
     isLoading: boolean;
     hasError: boolean;
-    isPanelOpen: boolean; // Add panel state tracking
+    isPanelOpen: boolean;
+    userHasInteracted: boolean; // Track user interaction for autoplay
+    autoplayAttempted: boolean;
   }
 
   class MusicPlayer {
@@ -167,60 +179,51 @@
     private readonly elements: Map<string, Element | null> = new Map();
     private readonly eventAbortController = new AbortController();
     private state: PlayerState;
-    private autoplayAttempted = false;
     
-    // Configuration - ENABLE autoplay
+    // Configuration
     private readonly config = {
-      maxRetries: 3,
-      fadeOutDuration: 500,
-      autoplay: true, // CHANGED: Enable autoplay
-      preloadNext: true,
-      saveVolume: true,
-      openPanelOnInit: false // Keep panel closed but enable autoplay
+      autoplay: true,
+      startWithFirstClick: true,
+      volume: 50,
+      showAutoplayInfo: true
     };
     
     private readonly playlist: readonly Track[] = [
+      {
+        id: 'tacos-1',
+        title: 'Raining Tacos',
+        artist: 'Parry Gripp & BooneBum',
+        src: '/music/raining-tacos.mp3',
+        duration: 180
+      },
       {
         id: 'lofi-1',
         title: 'Lofi Hip Hop Beat',
         artist: 'Chill Vibes',
         src: '/music/lofi-beat.mp3',
         duration: 180
-      },
-      {
-        id: 'ambient-1',
-        title: 'Ambient Relaxing',
-        artist: 'Nature Sounds',
-        src: '/music/ambient.mp3',
-        duration: 240
-      },
-      {
-        id: 'jazz-1',
-        title: 'Jazz Cafe',
-        artist: 'Smooth Jazz',
-        src: '/music/jazz-cafe.mp3',
-        duration: 210
       }
     ];
 
     constructor() {
-      // Initialize audio element
       const audioElement = document.getElementById('audio-player');
       if (!audioElement || !(audioElement instanceof HTMLAudioElement)) {
-        throw new Error('Audio element not found or invalid');
+        throw new Error('Audio element not found');
       }
       this.audio = audioElement;
 
-      // Initialize state - panel CLOSED by default
+      // Initialize state
       this.state = {
         isPlaying: false,
         currentTrackIndex: 0,
-        volume: this.loadSavedVolume(),
+        volume: this.config.volume,
         currentTime: 0,
         duration: 0,
         isLoading: false,
         hasError: false,
-        isPanelOpen: false // ADDED: Panel starts closed
+        isPanelOpen: false,
+        userHasInteracted: false,
+        autoplayAttempted: false
       };
 
       this.init();
@@ -231,17 +234,20 @@
         this.cacheElements();
         this.setupEventListeners();
         this.setupAudioEventListeners();
-        this.setupKeyboardNavigation();
+        this.setupAutoplayDetection();
         
-        // Load first track immediately for autoplay
+        // Set initial volume
+        this.audio.volume = this.state.volume / 100;
+        
+        // Try to load first track
         await this.loadTrack(this.state.currentTrackIndex);
         
         this.updateUI();
-        this.ensurePanelClosed(); // Panel stays closed but music loads
+        this.ensurePanelClosed();
         
-        // Attempt autoplay after initialization
-        if (this.config.autoplay) {
-          this.scheduleAutoplay();
+        // Show autoplay info if needed
+        if (this.config.showAutoplayInfo) {
+          this.showAutoplayInfo();
         }
         
       } catch (error) {
@@ -250,12 +256,56 @@
       }
     }
 
+    private setupAutoplayDetection(): void {
+      // Track any user interaction to enable autoplay
+      const userInteractionEvents = ['click', 'keydown', 'touchstart'];
+      
+      const handleUserInteraction = () => {
+        if (!this.state.userHasInteracted) {
+          this.state.userHasInteracted = true;
+          this.hideAutoplayInfo();
+          
+          // Attempt autoplay if configured and not already attempted
+          if (this.config.autoplay && !this.state.autoplayAttempted) {
+            this.attemptAutoplay();
+          }
+        }
+      };
+
+      userInteractionEvents.forEach(event => {
+        document.addEventListener(event, handleUserInteraction, { 
+          once: true, 
+          signal: this.eventAbortController.signal 
+        });
+      });
+    }
+
+    private async attemptAutoplay(): Promise<void> {
+      if (this.state.autoplayAttempted || this.state.isPlaying) return;
+      
+      this.state.autoplayAttempted = true;
+      
+      try {
+        // Small delay to ensure user interaction is registered
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        await this.play();
+        this.updateStatus('Auto-playing...');
+        this.showPlayingIndicator();
+        
+      } catch (error) {
+        console.warn('Autoplay failed:', error);
+        this.updateStatus('Click play to start');
+      }
+    }
+
     private cacheElements(): void {
       const elementIds = [
         'music-toggle', 'music-panel', 'song-title', 'song-artist',
         'current-time', 'total-time', 'progress-container', 'progress-bar',
         'prev-btn', 'play-pause-btn', 'next-btn', 'volume-slider',
-        'music-status', 'play-icon', 'pause-icon'
+        'music-status', 'play-icon', 'pause-icon', 'playing-indicator',
+        'autoplay-info'
       ];
 
       elementIds.forEach(id => {
@@ -271,18 +321,18 @@
         this.togglePanel();
       }, { signal });
 
-      // Playback controls
+      // Play/Pause with user interaction tracking
       this.addEventListenerSafely('play-pause-btn', 'click', async (e) => {
         e.preventDefault();
         
-        // Load track if not loaded (fallback, should already be loaded)
-        if (!this.audio.src) {
-          await this.loadTrack(this.state.currentTrackIndex);
-        }
+        // Mark user interaction
+        this.state.userHasInteracted = true;
+        this.hideAutoplayInfo();
         
-        this.togglePlayback();
+        await this.togglePlayback();
       }, { signal });
 
+      // Navigation
       this.addEventListenerSafely('prev-btn', 'click', () => {
         this.previousTrack();
       }, { signal });
@@ -291,88 +341,65 @@
         this.nextTrack();
       }, { signal });
 
-      // Volume control
+      // Volume
       this.addEventListenerSafely('volume-slider', 'input', (e) => {
         const target = e.target as HTMLInputElement;
         this.setVolume(Number(target.value));
       }, { signal });
 
-      // Progress control
+      // Progress
       this.addEventListenerSafely('progress-container', 'click', (e) => {
         this.handleProgressClick(e as MouseEvent);
       }, { signal });
 
-      // Close panel on outside click
+      // Outside click
       document.addEventListener('click', (e) => {
         this.handleOutsideClick(e);
-      }, { signal });
-
-      // Visibility change handling
-      document.addEventListener('visibilitychange', () => {
-        this.handleVisibilityChange();
       }, { signal });
     }
 
     private setupAudioEventListeners(): void {
       const { signal } = this.eventAbortController;
       
-      const audioEvents = {
-        'loadstart': () => this.updateStatus('Loading...'),
-        'loadedmetadata': () => this.handleLoadedMetadata(),
-        'canplay': () => this.handleCanPlay(),
-        'timeupdate': () => this.handleTimeUpdate(),
-        'ended': () => this.handleTrackEnded(),
-        'error': (e: Event) => this.handleAudioError(e),
-        'stalled': () => this.updateStatus('Connection issues...'),
-        'waiting': () => this.updateStatus('Buffering...'),
-        'playing': () => this.handlePlaying(),
-        'pause': () => this.handlePaused()
-      };
-
-      Object.entries(audioEvents).forEach(([event, handler]) => {
-        this.audio.addEventListener(event, handler, { signal });
-      });
-    }
-
-    private setupKeyboardNavigation(): void {
-      const { signal } = this.eventAbortController;
-      
-      document.addEventListener('keydown', (e) => {
-        if (e.target instanceof HTMLInputElement) return;
-        
-        // Only handle keyboard shortcuts when panel is open
-        if (!this.state.isPanelOpen) return;
-        
-        switch (e.code) {
-          case 'Space':
-            e.preventDefault();
-            this.togglePlayback();
-            break;
-          case 'ArrowLeft':
-            e.preventDefault();
-            this.previousTrack();
-            break;
-          case 'ArrowRight':
-            e.preventDefault();
-            this.nextTrack();
-            break;
-          case 'Escape':
-            this.closePanel();
-            break;
-        }
+      this.audio.addEventListener('loadstart', () => {
+        this.state.isLoading = true;
+        this.updateStatus('Loading...');
       }, { signal });
-    }
 
-    private addEventListenerSafely(
-      elementId: string, 
-      event: string, 
-      handler: EventListener, 
-      options?: AddEventListenerOptions
-    ): void {
-      const element = this.elements.get(elementId);
-      if (element) {
-        element.addEventListener(event, handler, options);
-      }
+      this.audio.addEventListener('loadedmetadata', () => {
+        this.handleLoadedMetadata();
+      }, { signal });
+
+      this.audio.addEventListener('canplay', () => {
+        this.state.isLoading = false;
+        this.updateStatus('Ready to play');
+      }, { signal });
+
+      this.audio.addEventListener('timeupdate', () => {
+        this.handleTimeUpdate();
+      }, { signal });
+
+      this.audio.addEventListener('ended', () => {
+        this.handleTrackEnded();
+      }, { signal });
+
+      this.audio.addEventListener('error', (e) => {
+        this.handleAudioError(e);
+      }, { signal });
+
+      this.audio.addEventListener('play', () => {
+        this.state.isPlaying = true;
+        this.updatePlayButton();
+        this.showPlayingIndicator();
+        this.updateStatus('Playing');
+      }, { signal });
+
+      this.audio.addEventListener('pause', () => {
+        this.state.isPlaying = false;
+        this.updatePlayButton();
+        this.hidePlayingIndicator();
+        this.updateStatus('Paused');
+      }, { signal });
     }
 
     private async loadTrack(index: number): Promise<void> {
@@ -382,21 +409,19 @@
 
       const track = this.playlist[index];
       this.state.currentTrackIndex = index;
-      this.state.isLoading = true;
       this.state.hasError = false;
 
       try {
-        // Reset audio state
+        // Reset audio
         this.audio.pause();
         this.audio.currentTime = 0;
         this.audio.src = track.src;
         this.audio.volume = this.state.volume / 100;
 
-        // Update UI immediately
+        // Update UI
         this.updateTrackInfo(track);
-        this.updateControls();
         
-        // Start loading
+        // Load the track
         this.audio.load();
         
       } catch (error) {
@@ -414,7 +439,7 @@
         }
       } catch (error) {
         console.error('Playback toggle failed:', error);
-        this.handleError('Playback failed');
+        this.handleError('Playback failed - check audio file exists');
       }
     }
 
@@ -424,17 +449,30 @@
       }
 
       try {
-        await this.audio.play();
-        this.state.isPlaying = true;
-        this.updatePlayButton();
-        this.updateStatus('Playing');
+        const playPromise = this.audio.play();
+        
+        if (playPromise !== undefined) {
+          await playPromise;
+          this.state.isPlaying = true;
+        }
       } catch (error) {
         console.error('Play failed:', error);
         
-        if (error instanceof DOMException && error.name === 'NotAllowedError') {
-          this.updateStatus('Click to enable audio');
-        } else {
-          this.handleError('Playback failed');
+        if (error instanceof DOMException) {
+          switch (error.name) {
+            case 'NotAllowedError':
+              this.updateStatus('Click to enable audio');
+              this.showAutoplayInfo();
+              break;
+            case 'NotSupportedError':
+              this.handleError('Audio format not supported');
+              break;
+            case 'AbortError':
+              this.updateStatus('Playback interrupted');
+              break;
+            default:
+              this.handleError('Playback failed');
+          }
         }
         throw error;
       }
@@ -443,8 +481,6 @@
     private async pause(): Promise<void> {
       this.audio.pause();
       this.state.isPlaying = false;
-      this.updatePlayButton();
-      this.updateStatus('Paused');
     }
 
     private async previousTrack(): Promise<void> {
@@ -454,7 +490,7 @@
       
       await this.loadTrack(newIndex);
       
-      if (this.state.isPlaying) {
+      if (this.state.userHasInteracted && this.state.isPlaying) {
         await this.play();
       }
     }
@@ -463,7 +499,7 @@
       const newIndex = (this.state.currentTrackIndex + 1) % this.playlist.length;
       await this.loadTrack(newIndex);
       
-      if (this.state.isPlaying) {
+      if (this.state.userHasInteracted && this.state.isPlaying) {
         await this.play();
       }
     }
@@ -473,107 +509,10 @@
       this.state.volume = clampedVolume;
       this.audio.volume = clampedVolume / 100;
       
-      if (this.config.saveVolume) {
-        localStorage.setItem('musicPlayerVolume', clampedVolume.toString());
-      }
+      localStorage.setItem('musicPlayerVolume', clampedVolume.toString());
     }
 
-    private loadSavedVolume(): number {
-      if (!this.config.saveVolume) return 70;
-      
-      const saved = localStorage.getItem('musicPlayerVolume');
-      return saved ? Math.max(0, Math.min(100, Number(saved))) : 70;
-    }
-
-    private handleProgressClick(e: MouseEvent): void {
-      if (!this.audio.duration) return;
-
-      const container = e.currentTarget as HTMLElement;
-      const rect = container.getBoundingClientRect();
-      const percentage = (e.clientX - rect.left) / rect.width;
-      const newTime = percentage * this.audio.duration;
-      
-      this.audio.currentTime = Math.max(0, Math.min(this.audio.duration, newTime));
-    }
-
-    private handleLoadedMetadata(): void {
-      this.state.duration = this.audio.duration || 0;
-      this.state.isLoading = false;
-      this.updateDuration();
-      this.updateControls();
-      this.updateStatus('Ready to play');
-    }
-
-    private handleCanPlay(): void {
-      this.state.isLoading = false;
-      this.updateStatus('Ready');
-    }
-
-    private handleTimeUpdate(): void {
-      this.state.currentTime = this.audio.currentTime;
-      this.updateProgress();
-    }
-
-    private async handleTrackEnded(): Promise<void> {
-      this.state.isPlaying = false;
-      this.updatePlayButton();
-      
-      // Auto-advance to next track
-      await this.nextTrack();
-    }
-
-    private handleAudioError(e: Event): void {
-      console.error('Audio error:', e);
-      this.state.hasError = true;
-      this.state.isPlaying = false;
-      this.state.isLoading = false;
-      this.updatePlayButton();
-      this.handleError('Failed to load audio');
-    }
-
-    private handlePlaying(): void {
-      this.state.isPlaying = true;
-      this.updatePlayButton();
-    }
-
-    private handlePaused(): void {
-      this.state.isPlaying = false;
-      this.updatePlayButton();
-    }
-
-    private handleOutsideClick(e: Event): void {
-      const container = this.elements.get('music-player-container') as HTMLElement;
-      const target = e.target as Node;
-      
-      if (container && !container.contains(target) && this.state.isPanelOpen) {
-        this.closePanel();
-      }
-    }
-
-    private handleVisibilityChange(): void {
-      if (document.hidden && this.state.isPlaying) {
-        // Optionally pause when tab is hidden
-        // this.pause();
-      }
-    }
-
-    private handleError(message: string): void {
-      this.state.hasError = true;
-      this.updateStatus(`Error: ${message}`);
-      this.showToast(message);
-    }
-
-    // UI Update Methods
-    private updateUI(): void {
-      // Always update track info since track is loaded on init
-      this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
-      this.updatePlayButton();
-      this.updateControls();
-      this.updateProgress();
-      this.updateVolume();
-      this.updateStatus('Ready to play');
-    }
-
+    // UI Methods
     private updateTrackInfo(track: Track): void {
       const titleEl = this.elements.get('song-title') as HTMLElement;
       const artistEl = this.elements.get('song-artist') as HTMLElement;
@@ -598,26 +537,12 @@
       pauseIcon.classList.toggle('hidden', !isPlaying);
     }
 
-    private updateControls(): void {
-      const prevBtn = this.elements.get('prev-btn') as HTMLButtonElement;
-      const nextBtn = this.elements.get('next-btn') as HTMLButtonElement;
-      
-      if (prevBtn) {
-        prevBtn.disabled = this.playlist.length <= 1;
-      }
-      
-      if (nextBtn) {
-        nextBtn.disabled = this.playlist.length <= 1;
-      }
-    }
-
     private updateProgress(): void {
       if (!this.state.duration) return;
       
       const percentage = (this.state.currentTime / this.state.duration) * 100;
       const progressBar = this.elements.get('progress-bar') as HTMLElement;
       const currentTimeEl = this.elements.get('current-time') as HTMLElement;
-      const progressContainer = this.elements.get('progress-container') as HTMLElement;
       
       if (progressBar) {
         progressBar.style.width = `${percentage}%`;
@@ -626,37 +551,119 @@
       if (currentTimeEl) {
         currentTimeEl.textContent = this.formatTime(this.state.currentTime);
       }
-      
-      if (progressContainer) {
-        progressContainer.setAttribute('aria-valuenow', percentage.toString());
-      }
-    }
-
-    private updateDuration(): void {
-      const totalTimeEl = this.elements.get('total-time') as HTMLElement;
-      
-      if (totalTimeEl) {
-        totalTimeEl.textContent = this.formatTime(this.state.duration);
-      }
-    }
-
-    private updateVolume(): void {
-      const volumeSlider = this.elements.get('volume-slider') as HTMLInputElement;
-      
-      if (volumeSlider) {
-        volumeSlider.value = this.state.volume.toString();
-      }
     }
 
     private updateStatus(message: string): void {
       const statusEl = this.elements.get('music-status') as HTMLElement;
-      
       if (statusEl) {
         statusEl.textContent = message;
       }
     }
 
-    // Panel Methods - FIXED
+    private updateUI(): void {
+      this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
+      this.updatePlayButton();
+      this.updateProgress();
+      const volumeSlider = this.elements.get('volume-slider') as HTMLInputElement;
+      if (volumeSlider) {
+        volumeSlider.value = this.state.volume.toString();
+      }
+    }
+
+    private showPlayingIndicator(): void {
+      const indicator = this.elements.get('playing-indicator') as HTMLElement;
+      if (indicator) {
+        indicator.classList.remove('hidden');
+      }
+    }
+
+    private hidePlayingIndicator(): void {
+      const indicator = this.elements.get('playing-indicator') as HTMLElement;
+      if (indicator) {
+        indicator.classList.add('hidden');
+      }
+    }
+
+    private showAutoplayInfo(): void {
+      const info = this.elements.get('autoplay-info') as HTMLElement;
+      if (info && this.config.showAutoplayInfo) {
+        info.classList.remove('hidden');
+      }
+    }
+
+    private hideAutoplayInfo(): void {
+      const info = this.elements.get('autoplay-info') as HTMLElement;
+      if (info) {
+        info.classList.add('hidden');
+      }
+    }
+
+    // Event Handlers
+    private handleLoadedMetadata(): void {
+      this.state.duration = this.audio.duration || 0;
+      this.state.isLoading = false;
+      
+      const totalTimeEl = this.elements.get('total-time') as HTMLElement;
+      if (totalTimeEl) {
+        totalTimeEl.textContent = this.formatTime(this.state.duration);
+      }
+    }
+
+    private handleTimeUpdate(): void {
+      this.state.currentTime = this.audio.currentTime;
+      this.updateProgress();
+    }
+
+    private async handleTrackEnded(): Promise<void> {
+      this.state.isPlaying = false;
+      this.updatePlayButton();
+      this.hidePlayingIndicator();
+      
+      // Auto-advance to next track if user has interacted
+      if (this.state.userHasInteracted) {
+        await this.nextTrack();
+      }
+    }
+
+    private handleAudioError(e: Event): void {
+      console.error('Audio error:', e);
+      this.state.hasError = true;
+      this.state.isPlaying = false;
+      this.state.isLoading = false;
+      this.updatePlayButton();
+      this.hidePlayingIndicator();
+      
+      const track = this.playlist[this.state.currentTrackIndex];
+      this.handleError(`Failed to load: ${track.title} - Check if file exists`);
+    }
+
+    private handleProgressClick(e: MouseEvent): void {
+      if (!this.audio.duration) return;
+
+      const container = e.currentTarget as HTMLElement;
+      const rect = container.getBoundingClientRect();
+      const percentage = (e.clientX - rect.left) / rect.width;
+      const newTime = percentage * this.audio.duration;
+      
+      this.audio.currentTime = Math.max(0, Math.min(this.audio.duration, newTime));
+    }
+
+    private handleOutsideClick(e: Event): void {
+      const container = this.elements.get('music-player-container') as HTMLElement;
+      const target = e.target as Node;
+      
+      if (container && !container.contains(target) && this.state.isPanelOpen) {
+        this.closePanel();
+      }
+    }
+
+    private handleError(message: string): void {
+      this.state.hasError = true;
+      this.updateStatus(`Error: ${message}`);
+      this.showToast(message);
+    }
+
+    // Panel Methods
     private togglePanel(): void {
       if (this.state.isPanelOpen) {
         this.closePanel();
@@ -671,19 +678,12 @@
       
       if (!panel || !toggle) return;
       
-      // Update state first
       this.state.isPanelOpen = true;
       
       panel.classList.remove('music-panel--closed');
       panel.classList.add('music-panel--open');
       panel.setAttribute('aria-hidden', 'false');
       toggle.setAttribute('aria-expanded', 'true');
-      
-      // Focus management
-      const playBtn = this.elements.get('play-pause-btn') as HTMLElement;
-      if (playBtn) {
-        setTimeout(() => playBtn.focus(), 100);
-      }
     }
 
     private closePanel(): void {
@@ -692,7 +692,6 @@
       
       if (!panel || !toggle) return;
       
-      // Update state first
       this.state.isPanelOpen = false;
       
       panel.classList.remove('music-panel--open');
@@ -701,13 +700,24 @@
       toggle.setAttribute('aria-expanded', 'false');
     }
 
-    // ADDED: Ensure panel is closed on init
     private ensurePanelClosed(): void {
       this.state.isPanelOpen = false;
       this.closePanel();
     }
 
     // Utility Methods
+    private addEventListenerSafely(
+      elementId: string, 
+      event: string, 
+      handler: EventListener, 
+      options?: AddEventListenerOptions
+    ): void {
+      const element = this.elements.get(elementId);
+      if (element) {
+        element.addEventListener(event, handler, options);
+      }
+    }
+
     private formatTime(seconds: number): string {
       if (!seconds || isNaN(seconds)) return '0:00';
       
@@ -717,34 +727,18 @@
     }
 
     private showToast(message: string): void {
-      // Remove existing toasts
       document.querySelectorAll('.music-toast').forEach(toast => toast.remove());
       
       const toast = document.createElement('div');
       toast.className = 'music-toast';
       toast.textContent = message;
       toast.setAttribute('role', 'alert');
-      toast.setAttribute('aria-live', 'assertive');
       
       document.body.appendChild(toast);
       
-      // Auto-remove
       setTimeout(() => {
         toast.remove();
       }, 4000);
-    }
-
-    private scheduleAutoplay(): void {
-      if (this.autoplayAttempted) return;
-      
-      setTimeout(async () => {
-        try {
-          await this.play();
-          this.autoplayAttempted = true;
-        } catch (error) {
-          console.warn('Autoplay failed:', error);
-        }
-      }, 1000);
     }
 
     // Cleanup
@@ -755,30 +749,29 @@
     }
   }
 
-  // Initialize player when DOM is ready
-  let musicPlayer: MusicPlayer | null = null;
-
+  // Initialize
   document.addEventListener('DOMContentLoaded', () => {
     try {
-      musicPlayer = new MusicPlayer();
+      const musicPlayer = new MusicPlayer();
+      
+      // Debug info
+      console.log('🎵 Music Player Initialized');
+      console.log('📁 Make sure audio files exist in public/music/ folder');
+      console.log('🔊 Autoplay requires user interaction in modern browsers');
+      
+      // Global access for debugging
+      if (import.meta.env.DEV) {
+        (window as any).musicPlayer = musicPlayer;
+      }
     } catch (error) {
       console.error('Failed to initialize music player:', error);
     }
   });
-
-  // Cleanup on page unload
-  window.addEventListener('beforeunload', () => {
-    musicPlayer?.destroy();
-  });
-
-  // Global access for debugging
-  if (import.meta.env.DEV) {
-    (window as any).musicPlayer = musicPlayer;
-  }
 </script>
 
+<!-- Include the same styles from previous version -->
 <style>
-  /* Base styles with CSS custom properties */
+  /* All the same styles as before... */
   :root {
     --music-primary: #8b5cf6;
     --music-secondary: #ec4899;
@@ -794,20 +787,13 @@
     --music-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  /* Toggle button */
   .music-toggle-btn {
-    @apply w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white;
+    @apply w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white relative;
     @apply hover:scale-110 focus:scale-110 focus:outline-none focus:ring-4 focus:ring-purple-500/30;
     @apply transition-all duration-300 ease-out;
     background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
   }
 
-  .music-toggle-btn:hover,
-  .music-toggle-btn:focus {
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  }
-
-  /* Panel base */
   .music-panel {
     @apply absolute bottom-16 right-0 w-80 rounded-2xl p-6 border backdrop-blur-lg;
     @apply transition-all duration-300 ease-out transform;
@@ -821,19 +807,16 @@
     background: var(--music-bg-dark);
   }
 
-  /* Panel states - FIXED: Ensure closed state is properly hidden */
   .music-panel--closed {
     @apply opacity-0 pointer-events-none translate-y-4 scale-95;
-    visibility: hidden; /* ADDED: Prevent any interaction */
+    visibility: hidden;
   }
 
   .music-panel--open {
     @apply opacity-100 pointer-events-auto translate-y-0 scale-100;
-    visibility: visible; /* ADDED: Allow interaction */
+    visibility: visible;
   }
 
-  /* Rest of the styles remain the same... */
-  /* Song info section */
   .song-info {
     @apply flex items-center gap-4 mb-6;
   }
@@ -933,7 +916,7 @@
   }
 
   .play-pause-btn {
-    @apply w-12 h-12 rounded-full flex items-center justify-center text-white;
+    @apply w-12 h-12 rounded-full flex items-center justify-center text-white relative;
     @apply hover:scale-105 focus:scale-105 focus:outline-none focus:ring-4 focus:ring-purple-500/30;
     @apply transition-all duration-200;
     background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
@@ -1035,91 +1018,7 @@
     }
   }
 
-  /* Mobile responsive adjustments */
-  @media (max-width: 640px) {
-    .music-panel {
-      @apply w-72 right-2;
-    }
-    
-    .music-toggle-btn {
-      @apply w-12 h-12;
-    }
-    
-    .music-toggle-btn svg {
-      @apply w-5 h-5;
-    }
-  }
-
-  /* High contrast mode support */
-  @media (prefers-contrast: high) {
-    .music-panel {
-      @apply border-2 border-gray-900 dark:border-white;
-    }
-    
-    .progress-bar {
-      background: #000;
-    }
-    
-    .dark .progress-bar {
-      background: #fff;
-    }
-  }
-
-  /* Reduced motion support */
-  @media (prefers-reduced-motion: reduce) {
-    .music-toggle-btn,
-    .play-pause-btn,
-    .control-btn,
-    .music-panel,
-    .progress-bar,
-    .volume-slider {
-      @apply transition-none;
-    }
-    
-    .music-toast {
-      animation: none;
-      @apply opacity-100;
-    }
-  }
-
-  /* Focus visible improvements */
-  .music-toggle-btn:focus-visible,
-  .play-pause-btn:focus-visible,
-  .control-btn:focus-visible {
-    @apply ring-2 ring-purple-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-800;
-  }
-
-  .progress-container:focus-visible,
-  .volume-slider:focus-visible {
-    @apply ring-2 ring-purple-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-800;
-  }
-
-  /* Loading states */
-  .music-panel[data-loading="true"] .song-title::after {
-    content: "";
-    @apply inline-block w-2 h-2 ml-2 bg-purple-500 rounded-full;
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.3;
-    }
-  }
-
-  /* Error states */
-  .music-panel[data-error="true"] {
-    @apply border-red-200 dark:border-red-800;
-  }
-
-  .music-panel[data-error="true"] .status-text {
-    @apply text-red-600 dark:text-red-400;
-  }
-
-  /* Playing indicator */
+  /* Playing indicator animation */
   .play-pause-btn[data-state="playing"]::before {
     content: "";
     @apply absolute inset-0 rounded-full;
@@ -1139,7 +1038,22 @@
     }
   }
 
-  /* IMPORTANT: Initial state override */
+  /* Mobile responsive */
+  @media (max-width: 640px) {
+    .music-panel {
+      @apply w-72 right-2;
+    }
+    
+    .music-toggle-btn {
+      @apply w-12 h-12;
+    }
+    
+    .music-toggle-btn svg {
+      @apply w-5 h-5;
+    }
+  }
+
+  /* Ensure panel starts closed */
   #music-panel {
     opacity: 0 !important;
     pointer-events: none !important;
@@ -1154,3 +1068,41 @@
     transform: translateY(0) scale(1) !important;
   }
 </style>
+
+<!-- File checker script to help debug missing audio files -->
+<script>
+  // Debug helper to check if audio files exist
+  window.checkAudioFiles = async function() {
+    const files = [
+      '/music/raining-tacos.mp3',
+      '/music/lofi-beat.mp3'
+    ];
+
+    console.log('🔍 Checking audio files...');
+    
+    for (const file of files) {
+      try {
+        const response = await fetch(file, { method: 'HEAD' });
+        if (response.ok) {
+          console.log(`✅ ${file} - Found`);
+        } else {
+          console.log(`❌ ${file} - Not found (${response.status})`);
+        }
+      } catch (error) {
+        console.log(`❌ ${file} - Error: ${(error as Error).message}`);
+      }
+    }
+    
+    console.log('💡 To add music files:');
+    console.log('1. Create public/music/ folder');
+    console.log('2. Add your .mp3 files there');
+    console.log('3. Update playlist in MusicPlayer component');
+  };
+
+  // Auto-check files on dev mode
+  if (import.meta.env.DEV) {
+    setTimeout(() => {
+      window.checkAudioFiles();
+    }, 2000);
+  }
+</script>
