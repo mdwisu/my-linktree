@@ -299,19 +299,8 @@ class HowlerMusicPlayer {
   private setupMobileOptimizations(): void {
     if (!this.isMobile) return;
 
-    // Mobile-specific audio context management
-    this.setupAudioContextManagement();
-    
-    // Mobile scroll handling
-    this.setupScrollHandling();
-    
-    // Visibility change handling for mobile
-    this.setupVisibilityHandling();
-    
-    // Page lifecycle handling
-    this.setupPageLifecycleHandling();
-
-    console.log('📱 Mobile optimizations applied');
+    // Disable aggressive mobile optimizations that cause issues
+    console.log('📱 Mobile optimizations applied (conservative mode)');
   }
 
   private setupAudioContextManagement(): void {
@@ -710,20 +699,28 @@ class HowlerMusicPlayer {
     
     this.autoplayAttempted = true;
     
+    // More conservative autoplay for production environments
     try {
-      // Wait a bit for UI to settle
-      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('🎯 Attempting autoplay...');
       
-      // Start playing
-      await this.play();
+      // Wait longer for UI to settle, especially on production
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      if (this.isPlaying) {
-        this.updateStatus('Auto-playing...');
-        console.log('✅ Autoplay successful');
+      // Check if user is still on page and hasn't manually started audio
+      if (!this.isPlaying && document.visibilityState === 'visible') {
+        console.log('🎵 Starting autoplay');
+        await this.play();
+        
+        if (this.isPlaying) {
+          this.updateStatus('Auto-playing...');
+          console.log('✅ Autoplay successful');
+        }
+      } else {
+        console.log('⏭️ Skipping autoplay - conditions not met');
       }
       
     } catch (error) {
-      console.warn('⚠️ Autoplay failed:', error);
+      console.warn('⚠️ Autoplay failed (this is normal in production):', error);
       this.updateStatus('Click play to start');
       this.showAutoplayInfo();
     }
@@ -735,36 +732,54 @@ class HowlerMusicPlayer {
     const track = this.playlist[index];
     this.currentIndex = index;
 
-    // Stop current sound if playing and cleanup properly
+    console.log(`🎵 Loading track: ${track.title}`);
+
+    // Enhanced cleanup to prevent audio duplication
     if (this.currentSound) {
-      this.currentSound.stop();
-      this.currentSound.unload();
-      // Force cleanup
+      console.log('🧹 Cleaning up previous sound');
+      
+      try {
+        // Force stop and cleanup
+        this.currentSound.stop();
+        this.currentSound.unload();
+      } catch (error) {
+        console.warn('⚠️ Error cleaning up sound:', error);
+      }
+      
+      // Force nullify to prevent ghost references
       this.currentSound = null;
     }
 
-    // Reset retry count for new track
+    // Reset all audio-related states
     this.retryCount = 0;
+    this.isPlaying = false;
+    this.stopProgressTracking();
+    this.updatePlayButton();
+    this.hidePlayingIndicator();
 
-    // Wait a bit before creating new sound to avoid conflicts
+    // Wait longer to ensure cleanup completes
     setTimeout(() => {
-      // Create new Howl instance with mobile optimizations
+      console.log('🎵 Creating new Howl instance');
+      
+      // Create new Howl instance with enhanced mobile settings
       this.currentSound = new Howl({
         src: [track.src],
         volume: this.volume,
         preload: true,
-        html5: this.isMobile, // Force HTML5 Audio for mobile
-        pool: 1, // Limit pool size for mobile
+        html5: true, // Always use HTML5 for better control
+        pool: 1, // Single instance only
         onload: () => {
+          console.log('✅ Track loaded successfully');
           this.updateStatus('Ready to play');
           this.updateTrackInfo(track);
           this.updateTotalTime();
         },
         onloaderror: (id: number, error: any) => {
-          console.error('Load error:', error);
+          console.error('❌ Load error:', error);
           this.handleError(`Failed to load: ${track.title}`);
         },
         onplay: () => {
+          console.log('▶️ Audio started playing');
           this.isPlaying = true;
           this.updatePlayButton();
           this.showPlayingIndicator();
@@ -773,6 +788,7 @@ class HowlerMusicPlayer {
           this.checkTacosRain(track);
         },
         onpause: () => {
+          console.log('⏸️ Audio paused');
           this.isPlaying = false;
           this.updatePlayButton();
           this.hidePlayingIndicator();
@@ -781,6 +797,7 @@ class HowlerMusicPlayer {
           this.stopTacosRain();
         },
         onstop: () => {
+          console.log('⏹️ Audio stopped');
           this.isPlaying = false;
           this.updatePlayButton();
           this.hidePlayingIndicator();
@@ -789,31 +806,64 @@ class HowlerMusicPlayer {
           this.stopTacosRain();
         },
         onend: () => {
+          console.log('🔚 Track ended');
           this.handleTrackEnded();
         },
         onplayerror: (id: number, error: any) => {
-          console.error('Play error:', error);
-          this.handlePlaybackError(error);
+          console.error('❌ Play error:', error);
+          this.handleError('Playback failed');
         }
       });
 
       this.updateTrackInfo(track);
-    }, 100); // Small delay to prevent conflicts
+    }, 200); // Increased delay for better stability
   }
 
   private async play(): Promise<void> {
     if (!this.currentSound) {
+      console.log('🔄 No current sound, loading track');
       this.loadTrack(this.currentIndex);
       return;
     }
 
     try {
+      console.log('🎵 Attempting to play audio');
+      
+      // Enhanced state checking before play
+      const soundState = this.currentSound.state();
+      console.log(`🔍 Sound state: ${soundState}`);
+      
+      if (soundState !== 'loaded') {
+        console.log('⏳ Sound not loaded yet, waiting...');
+        
+        // Wait for sound to load
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Sound load timeout'));
+          }, 5000);
+          
+          this.currentSound!.once('load', () => {
+            clearTimeout(timeout);
+            resolve(true);
+          });
+          
+          this.currentSound!.once('loaderror', (id, error) => {
+            clearTimeout(timeout);
+            reject(error);
+          });
+        });
+      }
+      
       // Reset retry count on manual play
       this.retryCount = 0;
+      
+      // Attempt to play
       this.currentSound.play();
+      console.log('✅ Play command sent');
+      
     } catch (error) {
-      console.error('Play failed:', error);
-      this.handlePlaybackError(error);
+      console.error('❌ Play failed:', error);
+      this.handleError('Failed to start playback');
       throw error;
     }
   }
@@ -831,15 +881,32 @@ class HowlerMusicPlayer {
   }
 
   private async togglePlayback(): Promise<void> {
-    // Prevent multiple rapid calls
+    console.log(`🎵 Toggle playback called - Current state: ${this.isPlaying}`);
+    
+    // Enhanced protection against multiple instances
     if (this.retryCount > 0) {
       console.log('🔄 Recovery in progress, ignoring toggle request');
       return;
     }
 
     if (this.isPlaying) {
+      console.log('⏸️ Pausing audio');
       this.pause();
     } else {
+      console.log('▶️ Starting audio');
+      
+      // Ensure clean state before playing
+      if (this.currentSound) {
+        // Force stop any ghost audio
+        try {
+          this.currentSound.stop();
+          // Small delay to ensure stop completes
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (error) {
+          console.warn('⚠️ Error stopping current sound:', error);
+        }
+      }
+      
       // Reset retry count before manual play
       this.retryCount = 0;
       await this.play();
@@ -1178,8 +1245,9 @@ class HowlerMusicPlayer {
     }, (duration + 1) * 1000); // Add 1 second buffer
   }
 
-  // Cleanup method
   public destroy(): void {
+    console.log('🧹 Destroying music player');
+    
     this.stopProgressTracking();
     this.stopTacosRain();
     
@@ -1188,12 +1256,24 @@ class HowlerMusicPlayer {
       clearTimeout(this.scrollTimeout);
     }
     
+    // Enhanced cleanup
     if (this.currentSound) {
-      this.currentSound.stop();
-      this.currentSound.unload();
+      try {
+        this.currentSound.stop();
+        this.currentSound.unload();
+        this.currentSound = null;
+      } catch (error) {
+        console.warn('⚠️ Error during cleanup:', error);
+      }
     }
     
-    console.log('🧹 Music player cleaned up');
+    // Reset all states
+    this.isPlaying = false;
+    this.retryCount = 0;
+    this.userHasInteracted = false;
+    this.autoplayAttempted = false;
+    
+    console.log('✅ Music player cleaned up completely');
   }
 }
 
