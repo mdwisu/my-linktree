@@ -186,6 +186,7 @@ declare class Howl {
   duration(): number;
   unload(): this;
   on(event: string, callback: Function): this;
+  state(): string;
 }
 
 class HowlerMusicPlayer {
@@ -201,6 +202,13 @@ class HowlerMusicPlayer {
   private elements: Elements;
   private tacosRainInterval: number | null;
   private activeTacos: HTMLElement[];
+  private isMobile: boolean;
+  private scrollTimeout: number | null;
+  private lastScrollTime: number;
+  private audioContext: AudioContext | null;
+  private isContextSuspended: boolean;
+  private retryCount: number;
+  private maxRetries: number;
 
   constructor() {
     this.currentIndex = 0;
@@ -213,6 +221,13 @@ class HowlerMusicPlayer {
     this.progressInterval = null;
     this.tacosRainInterval = null;
     this.activeTacos = [];
+    this.isMobile = this.detectMobile();
+    this.scrollTimeout = null;
+    this.lastScrollTime = 0;
+    this.audioContext = null;
+    this.isContextSuspended = false;
+    this.retryCount = 0;
+    this.maxRetries = 3;
     
     // Playlist configuration
     this.playlist = [
@@ -256,22 +271,304 @@ class HowlerMusicPlayer {
     this.init();
   }
 
+  private detectMobile(): boolean {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /MacIntel/.test(navigator.platform));
+  }
+
   private async init(): Promise<void> {
     try {
       this.cacheElements();
       this.setupEventListeners();
+      this.setupMobileOptimizations();
       this.setupAutoplayDetection();
       this.loadTrack(this.currentIndex);
       this.updateUI();
       this.ensurePanelClosed();
       
       console.log('🎵 Howler Music Player Initialized');
+      console.log('📱 Mobile device detected:', this.isMobile);
       console.log('🔊 Autoplay will trigger after user interaction');
       
     } catch (error) {
       console.error('Failed to initialize music player:', error);
       this.handleError('Failed to initialize player');
     }
+  }
+
+  private setupMobileOptimizations(): void {
+    if (!this.isMobile) return;
+
+    // Mobile-specific audio context management
+    this.setupAudioContextManagement();
+    
+    // Mobile scroll handling
+    this.setupScrollHandling();
+    
+    // Visibility change handling for mobile
+    this.setupVisibilityHandling();
+    
+    // Page lifecycle handling
+    this.setupPageLifecycleHandling();
+
+    console.log('📱 Mobile optimizations applied');
+  }
+
+  private setupAudioContextManagement(): void {
+    // Monitor audio context state
+    const checkAudioContext = () => {
+      if (this.currentSound && (this.currentSound as any)._audioContext) {
+        const context = (this.currentSound as any)._audioContext;
+        
+        if (context.state === 'suspended' && !this.isContextSuspended) {
+          this.isContextSuspended = true;
+          console.log('🔇 Audio context suspended');
+          
+          // Try to resume context when user interacts again
+          this.setupContextResume();
+        } else if (context.state === 'running' && this.isContextSuspended) {
+          this.isContextSuspended = false;
+          console.log('🔊 Audio context resumed');
+        }
+      }
+    };
+
+    setInterval(checkAudioContext, 1000);
+  }
+
+  private setupContextResume(): void {
+    const resumeContext = async () => {
+      if (this.currentSound && (this.currentSound as any)._audioContext) {
+        const context = (this.currentSound as any)._audioContext;
+        
+        if (context.state === 'suspended') {
+          try {
+            await context.resume();
+            console.log('✅ Audio context resumed successfully');
+            
+            // Restart playback if it was playing
+            if (this.isPlaying) {
+              setTimeout(() => {
+                this.handlePlaybackResume();
+              }, 100);
+            }
+          } catch (error) {
+            console.warn('⚠️ Failed to resume audio context:', error);
+          }
+        }
+      }
+    };
+
+    // Try to resume on various user interactions
+    const events = ['touchstart', 'touchend', 'click', 'keydown'];
+    const handler = () => {
+      resumeContext();
+      // Remove listeners after first successful resume
+      events.forEach(event => {
+        document.removeEventListener(event, handler);
+      });
+    };
+
+    events.forEach(event => {
+      document.addEventListener(event, handler, { once: true, passive: true });
+    });
+  }
+
+  private setupScrollHandling(): void {
+    let isScrolling = false;
+    
+    const handleScroll = () => {
+      if (!this.isMobile || !this.isPlaying) return;
+      
+      const now = Date.now();
+      this.lastScrollTime = now;
+      
+      if (!isScrolling) {
+        isScrolling = true;
+        // Don't pause immediately, wait for scroll to finish
+      }
+      
+      // Clear existing timeout
+      if (this.scrollTimeout) {
+        clearTimeout(this.scrollTimeout);
+      }
+      
+      // Set timeout to handle end of scroll
+      this.scrollTimeout = window.setTimeout(() => {
+        isScrolling = false;
+        
+        // Check if audio is still playing after scroll
+        if (this.isPlaying && this.currentSound) {
+          this.verifyPlaybackState();
+        }
+      }, 150); // Wait 150ms after scroll stops
+    };
+
+    // Use passive listeners for better performance
+    document.addEventListener('scroll', handleScroll, { passive: true });
+    document.addEventListener('touchmove', handleScroll, { passive: true });
+  }
+
+  private setupVisibilityHandling(): void {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        // Page is hidden
+        if (this.isPlaying) {
+          console.log('📱 Page hidden, maintaining playback state');
+        }
+      } else {
+        // Page is visible again
+        if (this.isPlaying) {
+          setTimeout(() => {
+            this.verifyPlaybackState();
+          }, 500);
+        }
+      }
+    });
+  }
+
+  private setupPageLifecycleHandling(): void {
+    // Handle page freeze/resume (mobile Safari)
+    window.addEventListener('pagehide', () => {
+      if (this.isPlaying) {
+        console.log('📱 Page hiding, saving state');
+      }
+    });
+
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted && this.isPlaying) {
+        // Page restored from cache
+        setTimeout(() => {
+          this.verifyPlaybackState();
+        }, 500);
+      }
+    });
+
+    // Handle app backgrounding
+    window.addEventListener('blur', () => {
+      if (this.isMobile && this.isPlaying) {
+        // App going to background
+        setTimeout(() => {
+          this.verifyPlaybackState();
+        }, 1000);
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      if (this.isMobile && this.isPlaying) {
+        // App coming to foreground
+        setTimeout(() => {
+          this.verifyPlaybackState();
+        }, 500);
+      }
+    });
+  }
+
+  private async verifyPlaybackState(): Promise<void> {
+    if (!this.currentSound || !this.isPlaying) return;
+
+    try {
+      // Check if sound is actually playing
+      const isActuallyPlaying = this.currentSound.state() === 'loaded' && 
+                               (this.currentSound as any).playing();
+
+      if (!isActuallyPlaying && this.isPlaying) {
+        console.log('🔧 Detected playback interruption, attempting recovery');
+        await this.recoverPlayback();
+      }
+    } catch (error) {
+      console.warn('⚠️ Error verifying playback state:', error);
+      this.handlePlaybackError(error);
+    }
+  }
+
+  private async recoverPlayback(): Promise<void> {
+    if (this.retryCount >= this.maxRetries) {
+      console.error('❌ Max retry attempts reached');
+      this.handlePlaybackFailure();
+      return;
+    }
+
+    this.retryCount++;
+    console.log(`🔄 Recovery attempt ${this.retryCount}/${this.maxRetries}`);
+
+    try {
+      // Stop current sound
+      if (this.currentSound) {
+        this.currentSound.stop();
+      }
+
+      // Wait a bit
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Try to resume audio context if needed
+      if (this.currentSound && (this.currentSound as any)._audioContext) {
+        const context = (this.currentSound as any)._audioContext;
+        if (context.state === 'suspended') {
+          await context.resume();
+        }
+      }
+
+      // Restart playback
+      await this.play();
+      
+      if (this.isPlaying) {
+        console.log('✅ Playback recovered successfully');
+        this.retryCount = 0; // Reset retry count on success
+        this.updateStatus('Playback recovered');
+      }
+
+    } catch (error) {
+      console.warn(`⚠️ Recovery attempt ${this.retryCount} failed:`, error);
+      
+      if (this.retryCount < this.maxRetries) {
+        // Try again after a longer delay
+        setTimeout(() => {
+          this.recoverPlayback();
+        }, 1000 * this.retryCount);
+      } else {
+        this.handlePlaybackFailure();
+      }
+    }
+  }
+
+  private handlePlaybackResume(): void {
+    if (this.currentSound && this.isPlaying) {
+      try {
+        this.currentSound.play();
+        console.log('🎵 Playback resumed after context recovery');
+      } catch (error) {
+        console.warn('⚠️ Failed to resume playback:', error);
+        this.recoverPlayback();
+      }
+    }
+  }
+
+  private handlePlaybackError(error: any): void {
+    console.error('🚨 Playback error:', error);
+    
+    if (this.isMobile) {
+      this.updateStatus('Playback interrupted');
+      
+      // Try recovery
+      setTimeout(() => {
+        this.recoverPlayback();
+      }, 500);
+    } else {
+      this.handleError('Playback failed');
+    }
+  }
+
+  private handlePlaybackFailure(): void {
+    this.isPlaying = false;
+    this.updatePlayButton();
+    this.hidePlayingIndicator();
+    this.stopProgressTracking();
+    this.updateStatus('Playback failed - tap play to retry');
+    this.retryCount = 0;
+    
+    // Show user-friendly message
+    this.showToast('Audio interrupted. Tap play to resume.');
   }
 
   private cacheElements(): void {
@@ -403,12 +700,16 @@ class HowlerMusicPlayer {
       this.currentSound.unload();
     }
 
-    // Create new Howl instance
+    // Reset retry count for new track
+    this.retryCount = 0;
+
+    // Create new Howl instance with mobile optimizations
     this.currentSound = new Howl({
       src: [track.src],
       volume: this.volume,
       preload: true,
-      html5: true, // Force HTML5 Audio for better compatibility
+      html5: this.isMobile, // Force HTML5 Audio for mobile
+      pool: 1, // Limit pool size for mobile
       onload: () => {
         this.updateStatus('Ready to play');
         this.updateTrackInfo(track);
@@ -447,7 +748,7 @@ class HowlerMusicPlayer {
       },
       onplayerror: (id: number, error: any) => {
         console.error('Play error:', error);
-        this.handleError('Playback failed');
+        this.handlePlaybackError(error);
       }
     });
 
@@ -461,9 +762,12 @@ class HowlerMusicPlayer {
     }
 
     try {
+      // Reset retry count on manual play
+      this.retryCount = 0;
       this.currentSound.play();
     } catch (error) {
       console.error('Play failed:', error);
+      this.handlePlaybackError(error);
       throw error;
     }
   }
@@ -818,10 +1122,18 @@ class HowlerMusicPlayer {
   public destroy(): void {
     this.stopProgressTracking();
     this.stopTacosRain();
+    
+    // Clear mobile-specific timeouts
+    if (this.scrollTimeout) {
+      clearTimeout(this.scrollTimeout);
+    }
+    
     if (this.currentSound) {
       this.currentSound.stop();
       this.currentSound.unload();
     }
+    
+    console.log('🧹 Music player cleaned up');
   }
 }
 
@@ -841,6 +1153,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     console.log('✅ Howler Music Player Ready');
     console.log('💡 Replace demo URLs in playlist with your audio files');
+    console.log('📱 Mobile optimizations enabled');
     
   } catch (error) {
     console.error('Failed to initialize Howler music player:', error);
@@ -864,11 +1177,30 @@ document.addEventListener('DOMContentLoaded', () => {
     --music-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
+  /* Mobile-first optimizations */
+  @media (max-width: 768px) {
+    .music-panel {
+      /* Prevent interference with scroll */
+      will-change: auto;
+      backface-visibility: hidden;
+      transform: translateZ(0);
+    }
+    
+    .taco-falling {
+      /* Optimize animations for mobile */
+      will-change: transform;
+      backface-visibility: hidden;
+    }
+  }
+
   .music-toggle-btn {
     @apply w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white relative;
     @apply hover:scale-110 focus:scale-110 focus:outline-none focus:ring-4 focus:ring-purple-500/30;
     @apply transition-all duration-300 ease-out;
     background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+    /* Mobile touch optimization */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .music-panel {
@@ -878,6 +1210,9 @@ document.addEventListener('DOMContentLoaded', () => {
     border-color: var(--music-border);
     box-shadow: var(--music-shadow);
     backdrop-filter: var(--music-backdrop);
+    /* Mobile optimizations */
+    touch-action: manipulation;
+    -webkit-overflow-scrolling: touch;
   }
 
   .dark .music-panel {
@@ -946,6 +1281,9 @@ document.addEventListener('DOMContentLoaded', () => {
     @apply w-full h-3 bg-gray-200 dark:bg-gray-700 rounded-full cursor-pointer relative;
     @apply focus:outline-none focus:ring-2 focus:ring-purple-500/50;
     @apply transition-all duration-200;
+    /* Mobile touch optimization */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .progress-container:hover {
@@ -979,6 +1317,9 @@ document.addEventListener('DOMContentLoaded', () => {
     @apply focus:outline-none focus:ring-2 focus:ring-purple-500/50;
     @apply transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
     color: var(--music-text-muted);
+    /* Mobile touch optimization */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .dark .control-btn {
@@ -995,6 +1336,9 @@ document.addEventListener('DOMContentLoaded', () => {
     @apply hover:scale-105 focus:scale-105 focus:outline-none focus:ring-4 focus:ring-purple-500/30;
     @apply transition-all duration-200;
     background: linear-gradient(135deg, var(--music-primary), var(--music-secondary));
+    /* Mobile touch optimization */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .play-pause-btn:hover,
@@ -1019,6 +1363,8 @@ document.addEventListener('DOMContentLoaded', () => {
     @apply flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer;
     @apply focus:outline-none focus:ring-2 focus:ring-purple-500/50;
     @apply transition-all duration-200;
+    /* Mobile touch optimization */
+    touch-action: manipulation;
   }
 
   .volume-slider::-webkit-slider-thumb {
@@ -1119,6 +1465,25 @@ document.addEventListener('DOMContentLoaded', () => {
     .music-toggle-btn svg {
       @apply w-5 h-5;
     }
+    
+    /* Improved mobile touch targets */
+    .control-btn {
+      @apply w-12 h-12;
+      min-height: 44px;
+      min-width: 44px;
+    }
+    
+    .progress-container {
+      @apply h-4;
+      min-height: 44px;
+      padding: 20px 0;
+    }
+    
+    .volume-slider {
+      @apply h-3;
+      min-height: 44px;
+      padding: 20px 0;
+    }
   }
 
   #music-panel {
@@ -1135,7 +1500,7 @@ document.addEventListener('DOMContentLoaded', () => {
     transform: translateY(0) scale(1) !important;
   }
 
-  /* Tacos Rain Animation Styles */
+  /* Tacos Rain Animation Styles - Mobile Optimized */
   .tacos-rain-container {
     position: fixed;
     top: 0;
@@ -1145,8 +1510,10 @@ document.addEventListener('DOMContentLoaded', () => {
     pointer-events: none;
     z-index: 40;
     overflow: hidden;
-    /* Debug: temporarily add border to see container */
-    /* border: 2px solid red; */
+    /* Mobile performance optimization */
+    will-change: auto;
+    backface-visibility: hidden;
+    transform: translateZ(0);
   }
 
   .tacos-rain-container.hidden {
@@ -1165,6 +1532,9 @@ document.addEventListener('DOMContentLoaded', () => {
     z-index: 41;
     text-shadow: 2px 2px 6px rgba(0,0,0,0.5);
     filter: drop-shadow(0 0 8px rgba(255, 193, 7, 0.3));
+    /* Mobile performance optimization */
+    will-change: transform;
+    backface-visibility: hidden;
   }
 
   @keyframes tacoFallWithDrift {
@@ -1258,6 +1628,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     50% {
       transform: translateY(-10px);
+    }
+  }
+
+  /* Reduce motion for users who prefer it */
+  @media (prefers-reduced-motion: reduce) {
+    .taco-falling,
+    .taco-falling::before,
+    .taco-falling::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+    
+    .music-toggle-btn,
+    .play-pause-btn,
+    .control-btn {
+      transition: none !important;
     }
   }
 </style>
