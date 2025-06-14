@@ -1,11 +1,13 @@
 ---
-import { Instagram, Youtube, Dribbble } from 'lucide-astro';
+import { Instagram, Youtube, Github, Linkedin, Twitter } from 'lucide-astro';
 import { socialLinks } from '../data/links';
 
 const iconMap = {
   instagram: Instagram,
   youtube: Youtube,
-  dribbble: Dribbble,
+  github: Github,
+  linkedin: Linkedin,
+  twitter: Twitter,
 };
 ---
 
@@ -18,6 +20,8 @@ const iconMap = {
     <div class="flex justify-center items-center gap-4 flex-wrap">
       {socialLinks.map((social, index) => {
         const Icon = iconMap[social.icon as keyof typeof iconMap];
+        if (!Icon) return null;
+        
         return (
           <a
             href={social.url}

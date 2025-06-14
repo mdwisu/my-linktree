@@ -59,9 +59,40 @@ export const links: LinkItem[] = [
     icon: "twitter",
     category: "social",
   },
+  {
+    id: "instagram",
+    title: "Instagram",
+    url: "https://instagram.com/mdwisu",
+    description: "Follow me on Instagram",
+    icon: "instagram",
+    category: "social",
+  },
+  {
+    id: "youtube",
+    title: "YouTube",
+    url: "https://youtube.com/@muhammaddwisusanto5925",
+    description: "Watch my videos",
+    icon: "youtube",
+    category: "social",
+  },
 ];
 
 export const socialLinks = [
+  {
+    name: "GitHub",
+    url: "https://github.com/mdwisu",
+    icon: "github",
+  },
+  {
+    name: "LinkedIn",
+    url: "https://www.linkedin.com/in/muhammad-dwi-susanto-684298201",
+    icon: "linkedin",
+  },
+  {
+    name: "Twitter",
+    url: "https://twitter.com/Mdwis_",
+    icon: "twitter",
+  },
   {
     name: "Instagram",
     url: "https://instagram.com/mdwisu",
@@ -72,9 +103,4 @@ export const socialLinks = [
     url: "https://youtube.com/@muhammaddwisusanto5925",
     icon: "youtube",
   },
-  // {
-  //   name: "Dribbble",
-  //   url: "https://dribbble.com/yourusername",
-  //   icon: "dribbble",
-  // },
 ];
