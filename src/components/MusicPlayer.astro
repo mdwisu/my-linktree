@@ -846,7 +846,7 @@ class HowlerMusicPlayer {
     if (!this.currentSound || !this.currentSound.duration()) return;
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const percentage = (e.clientX - rect.left) / rect.width;
+    const percentage = ((e.clientX - rect.left) / rect.width) * 100;
     const newTime = percentage * this.currentSound.duration();
     
     this.currentSound.seek(Math.max(0, Math.min(this.currentSound.duration(), newTime)));
@@ -873,14 +873,14 @@ class HowlerMusicPlayer {
     const duration = this.currentSound.duration() || 0;
     
     if (duration > 0) {
-      const percentage = (currentTime / duration) * 100;
+      const percentage = ((currentTime as number) / duration) * 100;
       
       if (this.elements.progressBar) {
         this.elements.progressBar.style.width = `${percentage}%`;
       }
       
       if (this.elements.currentTime) {
-        this.elements.currentTime.textContent = this.formatTime(currentTime);
+        this.elements.currentTime.textContent = this.formatTime(currentTime as number);
       }
     }
   }
