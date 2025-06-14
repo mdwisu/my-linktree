@@ -1,5 +1,5 @@
 ---
-// Fixed music player with proper autoplay handling
+// MusicPlayer.astro
 ---
 
 <div class="fixed bottom-4 right-4 z-50" id="music-player-container">
@@ -37,10 +37,10 @@
       </div>
       <div class="song-details">
         <h4 id="song-title" class="song-title" aria-live="polite">
-          Click play to start
+          Loading music...
         </h4>
         <p id="song-artist" class="song-artist" aria-live="polite">
-          Music ready
+          Please wait
         </p>
       </div>
     </div>
@@ -126,676 +126,619 @@
     <!-- Status Display -->
     <div class="status-section">
       <span id="music-status" class="status-text" aria-live="polite" aria-atomic="true">
-        Ready to play
+        Initializing...
       </span>
     </div>
 
     <!-- Autoplay Info -->
-    <div id="autoplay-info" class="text-xs text-center mt-2 text-gray-500 dark:text-gray-400 hidden">
-      Click play button to start music
+    <div id="autoplay-info" class="text-xs text-center mt-2 text-gray-500 dark:text-gray-400">
+      Click anywhere to enable audio
     </div>
   </div>
 </div>
 
-<!-- Audio Element -->
-<audio 
-  id="audio-player"
-  preload="metadata"
-  crossorigin="anonymous"
-  aria-hidden="true"
-></audio>
+<!-- Load Howler.js from CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
 
 <script>
-  // Declare window type extension
-  declare global {
-    interface Window {
-      checkAudioFiles: () => Promise<void>;
-    }
-  }
+// TypeScript interface declarations
+interface Track {
+  readonly id: string;
+  readonly title: string;
+  readonly artist: string;
+  readonly src: string;
+  readonly duration: number;
+}
 
-  interface Track {
-    readonly id: string;
-    readonly title: string;
-    readonly artist: string;
-    readonly src: string;
-    readonly duration?: number;
-  }
+interface Elements {
+  toggle: HTMLElement | null;
+  panel: HTMLElement | null;
+  songTitle: HTMLElement | null;
+  songArtist: HTMLElement | null;
+  currentTime: HTMLElement | null;
+  totalTime: HTMLElement | null;
+  progressContainer: HTMLElement | null;
+  progressBar: HTMLElement | null;
+  prevBtn: HTMLElement | null;
+  playPauseBtn: HTMLElement | null;
+  nextBtn: HTMLElement | null;
+  volumeSlider: HTMLInputElement | null;
+  musicStatus: HTMLElement | null;
+  playIcon: HTMLElement | null;
+  pauseIcon: HTMLElement | null;
+  playingIndicator: HTMLElement | null;
+  autoplayInfo: HTMLElement | null;
+}
 
-  interface PlayerState {
-    isPlaying: boolean;
-    currentTrackIndex: number;
-    volume: number;
-    currentTime: number;
-    duration: number;
-    isLoading: boolean;
-    hasError: boolean;
-    isPanelOpen: boolean;
-    userHasInteracted: boolean; // Track user interaction for autoplay
-    autoplayAttempted: boolean;
-  }
+// Howler.js type declaration (basic)
+declare class Howl {
+  constructor(options: any);
+  play(): number;
+  pause(): this;
+  stop(): this;
+  volume(vol?: number): number | this;
+  seek(position?: number): number | this;
+  duration(): number;
+  unload(): this;
+  on(event: string, callback: Function): this;
+}
 
-  class MusicPlayer {
-    private readonly audio: HTMLAudioElement;
-    private readonly elements: Map<string, Element | null> = new Map();
-    private readonly eventAbortController = new AbortController();
-    private state: PlayerState;
+class HowlerMusicPlayer {
+  private currentIndex: number;
+  private isPlaying: boolean;
+  private isPanelOpen: boolean;
+  private userHasInteracted: boolean;
+  private autoplayAttempted: boolean;
+  private volume: number;
+  private currentSound: Howl | null;
+  private progressInterval: number | null;
+  private playlist: Track[];
+  private elements: Elements;
+
+  constructor() {
+    this.currentIndex = 0;
+    this.isPlaying = false;
+    this.isPanelOpen = false;
+    this.userHasInteracted = false;
+    this.autoplayAttempted = false;
+    this.volume = 0.5;
+    this.currentSound = null;
+    this.progressInterval = null;
     
-    // Configuration
-    private readonly config = {
-      autoplay: true,
-      startWithFirstClick: true,
-      volume: 50,
-      showAutoplayInfo: true,
-      isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-    };
-    
-    private readonly playlist: readonly Track[] = [
-      {
-        id: 'tacos-1',
-        title: 'Raining Tacos',
-        artist: 'Parry Gripp & BooneBum',
-        src: '/music/raining-tacos.mp3',
-        duration: 180
-      },
-      {
-        id: 'lofi-1',
-        title: 'Lofi Hip Hop Beat',
-        artist: 'Chill Vibes',
-        src: '/music/lofi-beat.mp3',
-        duration: 180
-      }
+    // Playlist configuration
+    this.playlist = [
+    {
+              id: 'tacos-1',
+              title: 'Raining Tacos',
+              artist: 'Parry Gripp & BooneBum',
+              src: '/music/raining-tacos.mp3',
+              duration: 180
+          },
+          {
+              id: 'lofi-1',
+              title: 'Lofi Hip Hop Beat',
+              artist: 'Chill Vibes',
+              src: '/music/lofi-beat.mp3',
+              duration: 180
+          }
     ];
 
-    constructor() {
-      const audioElement = document.getElementById('audio-player');
-      if (!audioElement || !(audioElement instanceof HTMLAudioElement)) {
-        throw new Error('Audio element not found');
-      }
-      this.audio = audioElement;
+    // Initialize elements object
+    this.elements = {
+      toggle: null,
+      panel: null,
+      songTitle: null,
+      songArtist: null,
+      currentTime: null,
+      totalTime: null,
+      progressContainer: null,
+      progressBar: null,
+      prevBtn: null,
+      playPauseBtn: null,
+      nextBtn: null,
+      volumeSlider: null,
+      musicStatus: null,
+      playIcon: null,
+      pauseIcon: null,
+      playingIndicator: null,
+      autoplayInfo: null
+    };
 
-      // Initialize state
-      this.state = {
-        isPlaying: false,
-        currentTrackIndex: 0,
-        volume: this.config.volume,
-        currentTime: 0,
-        duration: 0,
-        isLoading: false,
-        hasError: false,
-        isPanelOpen: false,
-        userHasInteracted: false,
-        autoplayAttempted: false
-      };
+    this.init();
+  }
 
-      this.init();
-    }
-
-    private async init(): Promise<void> {
-      try {
-        this.cacheElements();
-        this.setupEventListeners();
-        this.setupAudioEventListeners();
-        this.setupAutoplayDetection();
-        
-        // Set initial volume
-        this.audio.volume = this.state.volume / 100;
-        
-        // Try to load first track
-        await this.loadTrack(this.state.currentTrackIndex);
-        
-        this.updateUI();
-        this.ensurePanelClosed();
-        
-        // Show autoplay info if needed
-        if (this.config.showAutoplayInfo) {
-          this.showAutoplayInfo();
-        }
-        
-      } catch (error) {
-        console.error('Failed to initialize music player:', error);
-        this.handleError('Failed to initialize player');
-      }
-    }
-
-    private setupAutoplayDetection(): void {
-      // Track any user interaction to enable autoplay
-      const userInteractionEvents = ['click', 'keydown', 'touchstart', 'touchend'];
+  private async init(): Promise<void> {
+    try {
+      this.cacheElements();
+      this.setupEventListeners();
+      this.setupAutoplayDetection();
+      this.loadTrack(this.currentIndex);
+      this.updateUI();
+      this.ensurePanelClosed();
       
-      const handleUserInteraction = () => {
-        if (!this.state.userHasInteracted) {
-          this.state.userHasInteracted = true;
-          this.hideAutoplayInfo();
-          
-          // Attempt autoplay if configured and not already attempted
-          if (this.config.autoplay && !this.state.autoplayAttempted) {
+      console.log('🎵 Howler Music Player Initialized');
+      console.log('🔊 Autoplay will trigger after user interaction');
+      
+    } catch (error) {
+      console.error('Failed to initialize music player:', error);
+      this.handleError('Failed to initialize player');
+    }
+  }
+
+  private cacheElements(): void {
+    this.elements = {
+      toggle: document.getElementById('music-toggle'),
+      panel: document.getElementById('music-panel'),
+      songTitle: document.getElementById('song-title'),
+      songArtist: document.getElementById('song-artist'),
+      currentTime: document.getElementById('current-time'),
+      totalTime: document.getElementById('total-time'),
+      progressContainer: document.getElementById('progress-container'),
+      progressBar: document.getElementById('progress-bar'),
+      prevBtn: document.getElementById('prev-btn'),
+      playPauseBtn: document.getElementById('play-pause-btn'),
+      nextBtn: document.getElementById('next-btn'),
+      volumeSlider: document.getElementById('volume-slider') as HTMLInputElement,
+      musicStatus: document.getElementById('music-status'),
+      playIcon: document.getElementById('play-icon'),
+      pauseIcon: document.getElementById('pause-icon'),
+      playingIndicator: document.getElementById('playing-indicator'),
+      autoplayInfo: document.getElementById('autoplay-info')
+    };
+  }
+
+  private setupEventListeners(): void {
+    // Panel toggle
+    this.elements.toggle?.addEventListener('click', () => {
+      this.markUserInteraction();
+      this.togglePanel();
+    });
+
+    // Play/Pause
+    this.elements.playPauseBtn?.addEventListener('click', () => {
+      this.markUserInteraction();
+      this.togglePlayback();
+    });
+
+    // Navigation
+    this.elements.prevBtn?.addEventListener('click', () => {
+      this.markUserInteraction();
+      this.previousTrack();
+    });
+
+    this.elements.nextBtn?.addEventListener('click', () => {
+      this.markUserInteraction();
+      this.nextTrack();
+    });
+
+    // Volume
+    this.elements.volumeSlider?.addEventListener('input', (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      this.setVolume(Number(target.value) / 100);
+    });
+
+    // Progress
+    this.elements.progressContainer?.addEventListener('click', (e: Event) => {
+      this.handleProgressClick(e as MouseEvent);
+    });
+
+    // Outside click
+    document.addEventListener('click', (e: Event) => {
+      this.handleOutsideClick(e);
+    });
+  }
+
+  private setupAutoplayDetection(): void {
+    // Track user interaction for autoplay
+    const interactionEvents = ['click', 'keydown', 'touchstart', 'mousedown'];
+    
+    const handleInteraction = () => {
+      if (!this.userHasInteracted) {
+        this.markUserInteraction();
+        
+        // Attempt autoplay after short delay
+        setTimeout(() => {
+          if (!this.autoplayAttempted) {
             this.attemptAutoplay();
           }
-        }
-      };
-
-      userInteractionEvents.forEach(event => {
-        document.addEventListener(event, handleUserInteraction, { 
-          once: true, 
-          signal: this.eventAbortController.signal 
-        });
-      });
-
-      // Tambahan untuk mobile: coba autoplay setelah interaksi pertama
-      if (this.config.isMobile) {
-        document.addEventListener('touchstart', () => {
-          if (!this.state.autoplayAttempted && this.config.autoplay) {
-            this.attemptAutoplay();
-          }
-        }, { once: true, signal: this.eventAbortController.signal });
+        }, 300);
       }
-    }
+    };
 
-    private async attemptAutoplay(): Promise<void> {
-      if (this.state.autoplayAttempted || this.state.isPlaying) return;
+    interactionEvents.forEach(event => {
+      document.addEventListener(event, handleInteraction, { once: true });
+    });
+  }
+
+  private markUserInteraction(): void {
+    if (!this.userHasInteracted) {
+      this.userHasInteracted = true;
+      this.hideAutoplayInfo();
+      console.log('🎯 User interaction detected - autoplay enabled');
+    }
+  }
+
+  private async attemptAutoplay(): Promise<void> {
+    if (this.autoplayAttempted || this.isPlaying) return;
+    
+    this.autoplayAttempted = true;
+    
+    try {
+      // Wait a bit for UI to settle
+      await new Promise(resolve => setTimeout(resolve, 500));
       
-      this.state.autoplayAttempted = true;
+      // Start playing
+      await this.play();
       
-      try {
-        // Untuk mobile, tunggu sedikit lebih lama
-        const delay = this.config.isMobile ? 500 : 100;
-        await new Promise(resolve => setTimeout(resolve, delay));
-        
-        // Set volume ke 0 dulu untuk menghindari suara keras
-        const originalVolume = this.audio.volume;
-        this.audio.volume = 0;
-        
-        await this.play();
-        
-        // Kembalikan volume secara bertahap
-        if (this.state.isPlaying) {
-          this.audio.volume = originalVolume;
-          this.updateStatus('Auto-playing...');
-          this.showPlayingIndicator();
-        }
-        
-      } catch (error) {
-        console.warn('Autoplay failed:', error);
-        this.updateStatus('Click play to start');
-        this.showAutoplayInfo();
+      if (this.isPlaying) {
+        this.updateStatus('Auto-playing...');
+        console.log('✅ Autoplay successful');
       }
-    }
-
-    private cacheElements(): void {
-      const elementIds = [
-        'music-toggle', 'music-panel', 'song-title', 'song-artist',
-        'current-time', 'total-time', 'progress-container', 'progress-bar',
-        'prev-btn', 'play-pause-btn', 'next-btn', 'volume-slider',
-        'music-status', 'play-icon', 'pause-icon', 'playing-indicator',
-        'autoplay-info'
-      ];
-
-      elementIds.forEach(id => {
-        this.elements.set(id, document.getElementById(id));
-      });
-    }
-
-    private setupEventListeners(): void {
-      const { signal } = this.eventAbortController;
-
-      // Panel toggle
-      this.addEventListenerSafely('music-toggle', 'click', () => {
-        this.togglePanel();
-      }, { signal });
-
-      // Play/Pause with user interaction tracking
-      this.addEventListenerSafely('play-pause-btn', 'click', async (e) => {
-        e.preventDefault();
-        
-        // Mark user interaction
-        this.state.userHasInteracted = true;
-        this.hideAutoplayInfo();
-        
-        await this.togglePlayback();
-      }, { signal });
-
-      // Navigation
-      this.addEventListenerSafely('prev-btn', 'click', () => {
-        this.previousTrack();
-      }, { signal });
-
-      this.addEventListenerSafely('next-btn', 'click', () => {
-        this.nextTrack();
-      }, { signal });
-
-      // Volume
-      this.addEventListenerSafely('volume-slider', 'input', (e) => {
-        const target = e.target as HTMLInputElement;
-        this.setVolume(Number(target.value));
-      }, { signal });
-
-      // Progress
-      this.addEventListenerSafely('progress-container', 'click', (e) => {
-        this.handleProgressClick(e as MouseEvent);
-      }, { signal });
-
-      // Outside click
-      document.addEventListener('click', (e) => {
-        this.handleOutsideClick(e);
-      }, { signal });
-    }
-
-    private setupAudioEventListeners(): void {
-      const { signal } = this.eventAbortController;
       
-      this.audio.addEventListener('loadstart', () => {
-        this.state.isLoading = true;
-        this.updateStatus('Loading...');
-      }, { signal });
+    } catch (error) {
+      console.warn('⚠️ Autoplay failed:', error);
+      this.updateStatus('Click play to start');
+      this.showAutoplayInfo();
+    }
+  }
 
-      this.audio.addEventListener('loadedmetadata', () => {
-        this.handleLoadedMetadata();
-      }, { signal });
+  private loadTrack(index: number): void {
+    if (index < 0 || index >= this.playlist.length) return;
 
-      this.audio.addEventListener('canplay', () => {
-        this.state.isLoading = false;
+    const track = this.playlist[index];
+    this.currentIndex = index;
+
+    // Stop current sound if playing
+    if (this.currentSound) {
+      this.currentSound.stop();
+      this.currentSound.unload();
+    }
+
+    // Create new Howl instance
+    this.currentSound = new Howl({
+      src: [track.src],
+      volume: this.volume,
+      preload: true,
+      html5: true, // Force HTML5 Audio for better compatibility
+      onload: () => {
         this.updateStatus('Ready to play');
-      }, { signal });
-
-      this.audio.addEventListener('timeupdate', () => {
-        this.handleTimeUpdate();
-      }, { signal });
-
-      this.audio.addEventListener('ended', () => {
-        this.handleTrackEnded();
-      }, { signal });
-
-      this.audio.addEventListener('error', (e) => {
-        this.handleAudioError(e);
-      }, { signal });
-
-      this.audio.addEventListener('play', () => {
-        this.state.isPlaying = true;
+        this.updateTrackInfo(track);
+        this.updateTotalTime();
+      },
+      onloaderror: (id: number, error: any) => {
+        console.error('Load error:', error);
+        this.handleError(`Failed to load: ${track.title}`);
+      },
+      onplay: () => {
+        this.isPlaying = true;
         this.updatePlayButton();
         this.showPlayingIndicator();
         this.updateStatus('Playing');
-      }, { signal });
-
-      this.audio.addEventListener('pause', () => {
-        this.state.isPlaying = false;
+        this.startProgressTracking();
+      },
+      onpause: () => {
+        this.isPlaying = false;
         this.updatePlayButton();
         this.hidePlayingIndicator();
         this.updateStatus('Paused');
-      }, { signal });
-    }
-
-    private async loadTrack(index: number): Promise<void> {
-      if (index < 0 || index >= this.playlist.length) {
-        throw new Error(`Invalid track index: ${index}`);
+        this.stopProgressTracking();
+      },
+      onstop: () => {
+        this.isPlaying = false;
+        this.updatePlayButton();
+        this.hidePlayingIndicator();
+        this.updateStatus('Stopped');
+        this.stopProgressTracking();
+      },
+      onend: () => {
+        this.handleTrackEnded();
+      },
+      onplayerror: (id: number, error: any) => {
+        console.error('Play error:', error);
+        this.handleError('Playback failed');
       }
+    });
 
-      const track = this.playlist[index];
-      this.state.currentTrackIndex = index;
-      this.state.hasError = false;
+    this.updateTrackInfo(track);
+  }
 
-      try {
-        // Reset audio
-        this.audio.pause();
-        this.audio.currentTime = 0;
-        this.audio.src = track.src;
-        this.audio.volume = this.state.volume / 100;
-
-        // Update UI
-        this.updateTrackInfo(track);
-        
-        // Load the track
-        this.audio.load();
-        
-      } catch (error) {
-        console.error('Failed to load track:', error);
-        this.handleError(`Failed to load: ${track.title}`);
-      }
+  private async play(): Promise<void> {
+    if (!this.currentSound) {
+      this.loadTrack(this.currentIndex);
+      return;
     }
 
-    private async togglePlayback(): Promise<void> {
-      try {
-        if (this.state.isPlaying) {
-          await this.pause();
-        } else {
-          await this.play();
-        }
-      } catch (error) {
-        console.error('Playback toggle failed:', error);
-        this.handleError('Playback failed - check audio file exists');
-      }
-    }
-
-    private async play(): Promise<void> {
-      if (this.state.hasError) {
-        await this.loadTrack(this.state.currentTrackIndex);
-      }
-
-      try {
-        const playPromise = this.audio.play();
-        
-        if (playPromise !== undefined) {
-          await playPromise;
-          this.state.isPlaying = true;
-        }
-      } catch (error) {
-        console.error('Play failed:', error);
-        
-        if (error instanceof DOMException) {
-          switch (error.name) {
-            case 'NotAllowedError':
-              this.updateStatus('Click to enable audio');
-              this.showAutoplayInfo();
-              break;
-            case 'NotSupportedError':
-              this.handleError('Audio format not supported');
-              break;
-            case 'AbortError':
-              this.updateStatus('Playback interrupted');
-              break;
-            default:
-              this.handleError('Playback failed');
-          }
-        }
-        throw error;
-      }
-    }
-
-    private async pause(): Promise<void> {
-      this.audio.pause();
-      this.state.isPlaying = false;
-    }
-
-    private async previousTrack(): Promise<void> {
-      const newIndex = this.state.currentTrackIndex > 0 
-        ? this.state.currentTrackIndex - 1 
-        : this.playlist.length - 1;
-      
-      await this.loadTrack(newIndex);
-      
-      if (this.state.userHasInteracted && this.state.isPlaying) {
-        await this.play();
-      }
-    }
-
-    private async nextTrack(): Promise<void> {
-      const newIndex = (this.state.currentTrackIndex + 1) % this.playlist.length;
-      await this.loadTrack(newIndex);
-      
-      if (this.state.userHasInteracted && this.state.isPlaying) {
-        await this.play();
-      }
-    }
-
-    private setVolume(volume: number): void {
-      const clampedVolume = Math.max(0, Math.min(100, volume));
-      this.state.volume = clampedVolume;
-      this.audio.volume = clampedVolume / 100;
-      
-      localStorage.setItem('musicPlayerVolume', clampedVolume.toString());
-    }
-
-    // UI Methods
-    private updateTrackInfo(track: Track): void {
-      const titleEl = this.elements.get('song-title') as HTMLElement;
-      const artistEl = this.elements.get('song-artist') as HTMLElement;
-      
-      if (titleEl) titleEl.textContent = track.title;
-      if (artistEl) artistEl.textContent = track.artist;
-    }
-
-    private updatePlayButton(): void {
-      const playBtn = this.elements.get('play-pause-btn') as HTMLButtonElement;
-      const playIcon = this.elements.get('play-icon') as HTMLElement;
-      const pauseIcon = this.elements.get('pause-icon') as HTMLElement;
-      
-      if (!playBtn || !playIcon || !pauseIcon) return;
-      
-      const isPlaying = this.state.isPlaying;
-      
-      playBtn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
-      playBtn.setAttribute('data-state', isPlaying ? 'playing' : 'paused');
-      
-      playIcon.classList.toggle('hidden', isPlaying);
-      pauseIcon.classList.toggle('hidden', !isPlaying);
-    }
-
-    private updateProgress(): void {
-      if (!this.state.duration) return;
-      
-      const percentage = (this.state.currentTime / this.state.duration) * 100;
-      const progressBar = this.elements.get('progress-bar') as HTMLElement;
-      const currentTimeEl = this.elements.get('current-time') as HTMLElement;
-      
-      if (progressBar) {
-        progressBar.style.width = `${percentage}%`;
-      }
-      
-      if (currentTimeEl) {
-        currentTimeEl.textContent = this.formatTime(this.state.currentTime);
-      }
-    }
-
-    private updateStatus(message: string): void {
-      const statusEl = this.elements.get('music-status') as HTMLElement;
-      if (statusEl) {
-        statusEl.textContent = message;
-      }
-    }
-
-    private updateUI(): void {
-      this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
-      this.updatePlayButton();
-      this.updateProgress();
-      const volumeSlider = this.elements.get('volume-slider') as HTMLInputElement;
-      if (volumeSlider) {
-        volumeSlider.value = this.state.volume.toString();
-      }
-    }
-
-    private showPlayingIndicator(): void {
-      const indicator = this.elements.get('playing-indicator') as HTMLElement;
-      if (indicator) {
-        indicator.classList.remove('hidden');
-      }
-    }
-
-    private hidePlayingIndicator(): void {
-      const indicator = this.elements.get('playing-indicator') as HTMLElement;
-      if (indicator) {
-        indicator.classList.add('hidden');
-      }
-    }
-
-    private showAutoplayInfo(): void {
-      const info = this.elements.get('autoplay-info') as HTMLElement;
-      if (info && this.config.showAutoplayInfo) {
-        info.textContent = this.config.isMobile 
-          ? 'Tap anywhere to enable audio'
-          : 'Click play button to start music';
-        info.classList.remove('hidden');
-      }
-    }
-
-    private hideAutoplayInfo(): void {
-      const info = this.elements.get('autoplay-info') as HTMLElement;
-      if (info) {
-        info.classList.add('hidden');
-      }
-    }
-
-    // Event Handlers
-    private handleLoadedMetadata(): void {
-      this.state.duration = this.audio.duration || 0;
-      this.state.isLoading = false;
-      
-      const totalTimeEl = this.elements.get('total-time') as HTMLElement;
-      if (totalTimeEl) {
-        totalTimeEl.textContent = this.formatTime(this.state.duration);
-      }
-    }
-
-    private handleTimeUpdate(): void {
-      this.state.currentTime = this.audio.currentTime;
-      this.updateProgress();
-    }
-
-    private async handleTrackEnded(): Promise<void> {
-      this.state.isPlaying = false;
-      this.updatePlayButton();
-      this.hidePlayingIndicator();
-      
-      // Auto-advance to next track if user has interacted
-      if (this.state.userHasInteracted) {
-        await this.nextTrack();
-      }
-    }
-
-    private handleAudioError(e: Event): void {
-      console.error('Audio error:', e);
-      this.state.hasError = true;
-      this.state.isPlaying = false;
-      this.state.isLoading = false;
-      this.updatePlayButton();
-      this.hidePlayingIndicator();
-      
-      const track = this.playlist[this.state.currentTrackIndex];
-      this.handleError(`Failed to load: ${track.title} - Check if file exists`);
-    }
-
-    private handleProgressClick(e: MouseEvent): void {
-      if (!this.audio.duration) return;
-
-      const container = e.currentTarget as HTMLElement;
-      const rect = container.getBoundingClientRect();
-      const percentage = (e.clientX - rect.left) / rect.width;
-      const newTime = percentage * this.audio.duration;
-      
-      this.audio.currentTime = Math.max(0, Math.min(this.audio.duration, newTime));
-    }
-
-    private handleOutsideClick(e: Event): void {
-      const container = this.elements.get('music-player-container') as HTMLElement;
-      const target = e.target as Node;
-      
-      if (container && !container.contains(target) && this.state.isPanelOpen) {
-        this.closePanel();
-      }
-    }
-
-    private handleError(message: string): void {
-      this.state.hasError = true;
-      this.updateStatus(`Error: ${message}`);
-      this.showToast(message);
-    }
-
-    // Panel Methods
-    private togglePanel(): void {
-      if (this.state.isPanelOpen) {
-        this.closePanel();
-      } else {
-        this.openPanel();
-      }
-    }
-
-    private openPanel(): void {
-      const panel = this.elements.get('music-panel') as HTMLElement;
-      const toggle = this.elements.get('music-toggle') as HTMLElement;
-      
-      if (!panel || !toggle) return;
-      
-      this.state.isPanelOpen = true;
-      
-      panel.classList.remove('music-panel--closed');
-      panel.classList.add('music-panel--open');
-      panel.setAttribute('aria-hidden', 'false');
-      toggle.setAttribute('aria-expanded', 'true');
-    }
-
-    private closePanel(): void {
-      const panel = this.elements.get('music-panel') as HTMLElement;
-      const toggle = this.elements.get('music-toggle') as HTMLElement;
-      
-      if (!panel || !toggle) return;
-      
-      this.state.isPanelOpen = false;
-      
-      panel.classList.remove('music-panel--open');
-      panel.classList.add('music-panel--closed');
-      panel.setAttribute('aria-hidden', 'true');
-      toggle.setAttribute('aria-expanded', 'false');
-    }
-
-    private ensurePanelClosed(): void {
-      this.state.isPanelOpen = false;
-      this.closePanel();
-    }
-
-    // Utility Methods
-    private addEventListenerSafely(
-      elementId: string, 
-      event: string, 
-      handler: EventListener, 
-      options?: AddEventListenerOptions
-    ): void {
-      const element = this.elements.get(elementId);
-      if (element) {
-        element.addEventListener(event, handler, options);
-      }
-    }
-
-    private formatTime(seconds: number): string {
-      if (!seconds || isNaN(seconds)) return '0:00';
-      
-      const mins = Math.floor(seconds / 60);
-      const secs = Math.floor(seconds % 60);
-      return `${mins}:${secs.toString().padStart(2, '0')}`;
-    }
-
-    private showToast(message: string): void {
-      document.querySelectorAll('.music-toast').forEach(toast => toast.remove());
-      
-      const toast = document.createElement('div');
-      toast.className = 'music-toast';
-      toast.textContent = message;
-      toast.setAttribute('role', 'alert');
-      
-      document.body.appendChild(toast);
-      
-      setTimeout(() => {
-        toast.remove();
-      }, 4000);
-    }
-
-    // Cleanup
-    public destroy(): void {
-      this.eventAbortController.abort();
-      this.audio.pause();
-      this.audio.src = '';
+    try {
+      this.currentSound.play();
+    } catch (error) {
+      console.error('Play failed:', error);
+      throw error;
     }
   }
 
-  // Initialize
-  document.addEventListener('DOMContentLoaded', () => {
-    try {
-      const musicPlayer = new MusicPlayer();
-      
-      // Debug info
-      console.log('🎵 Music Player Initialized');
-      console.log('📁 Make sure audio files exist in public/music/ folder');
-      console.log('🔊 Autoplay requires user interaction in modern browsers');
-      
-      // Global access for debugging
-      if (import.meta.env.DEV) {
-        (window as any).musicPlayer = musicPlayer;
-      }
-    } catch (error) {
-      console.error('Failed to initialize music player:', error);
+  private pause(): void {
+    if (this.currentSound) {
+      this.currentSound.pause();
     }
-  });
+  }
+
+  private stop(): void {
+    if (this.currentSound) {
+      this.currentSound.stop();
+    }
+  }
+
+  private async togglePlayback(): Promise<void> {
+    if (this.isPlaying) {
+      this.pause();
+    } else {
+      await this.play();
+    }
+  }
+
+  private previousTrack(): void {
+    const newIndex = this.currentIndex > 0 
+      ? this.currentIndex - 1 
+      : this.playlist.length - 1;
+    
+    const wasPlaying = this.isPlaying;
+    this.loadTrack(newIndex);
+    
+    if (wasPlaying && this.userHasInteracted) {
+      setTimeout(() => this.play(), 100);
+    }
+  }
+
+  private nextTrack(): void {
+    const newIndex = (this.currentIndex + 1) % this.playlist.length;
+    const wasPlaying = this.isPlaying;
+    this.loadTrack(newIndex);
+    
+    if (wasPlaying && this.userHasInteracted) {
+      setTimeout(() => this.play(), 100);
+    }
+  }
+
+  private setVolume(volume: number): void {
+    this.volume = Math.max(0, Math.min(1, volume));
+    if (this.currentSound) {
+      this.currentSound.volume(this.volume);
+    }
+    
+    // Update slider
+    if (this.elements.volumeSlider) {
+      this.elements.volumeSlider.value = (this.volume * 100).toString();
+    }
+  }
+
+  private handleTrackEnded(): void {
+    this.isPlaying = false;
+    this.updatePlayButton();
+    this.hidePlayingIndicator();
+    
+    // Auto-advance if user has interacted
+    if (this.userHasInteracted) {
+      setTimeout(() => this.nextTrack(), 500);
+    }
+  }
+
+  private handleProgressClick(e: MouseEvent): void {
+    if (!this.currentSound || !this.currentSound.duration()) return;
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const percentage = (e.clientX - rect.left) / rect.width;
+    const newTime = percentage * this.currentSound.duration();
+    
+    this.currentSound.seek(Math.max(0, Math.min(this.currentSound.duration(), newTime)));
+  }
+
+  private startProgressTracking(): void {
+    this.stopProgressTracking();
+    this.progressInterval = window.setInterval(() => {
+      this.updateProgress();
+    }, 1000);
+  }
+
+  private stopProgressTracking(): void {
+    if (this.progressInterval) {
+      clearInterval(this.progressInterval);
+      this.progressInterval = null;
+    }
+  }
+
+  private updateProgress(): void {
+    if (!this.currentSound) return;
+    
+    const currentTime = Number(this.currentSound.seek()) || 0;
+    const duration = Number(this.currentSound.duration()) || 0;
+    
+    if (duration > 0) {
+      const percentage = (currentTime / duration) * 100;
+      
+      if (this.elements.progressBar) {
+        this.elements.progressBar.style.width = `${percentage}%`;
+      }
+      
+      if (this.elements.currentTime) {
+        this.elements.currentTime.textContent = this.formatTime(currentTime);
+      }
+    }
+  }
+
+  private updateTotalTime(): void {
+    if (this.currentSound && this.elements.totalTime) {
+      const duration = this.currentSound.duration() || 0;
+      this.elements.totalTime.textContent = this.formatTime(duration);
+    }
+  }
+
+  private updateTrackInfo(track: Track): void {
+    if (this.elements.songTitle) {
+      this.elements.songTitle.textContent = track.title;
+    }
+    if (this.elements.songArtist) {
+      this.elements.songArtist.textContent = track.artist;
+    }
+  }
+
+  private updatePlayButton(): void {
+    const playBtn = this.elements.playPauseBtn;
+    const playIcon = this.elements.playIcon;
+    const pauseIcon = this.elements.pauseIcon;
+    
+    if (!playBtn || !playIcon || !pauseIcon) return;
+    
+    playBtn.setAttribute('aria-label', this.isPlaying ? 'Pause' : 'Play');
+    playBtn.setAttribute('data-state', this.isPlaying ? 'playing' : 'paused');
+    
+    playIcon.classList.toggle('hidden', this.isPlaying);
+    pauseIcon.classList.toggle('hidden', !this.isPlaying);
+  }
+
+  private updateStatus(message: string): void {
+    if (this.elements.musicStatus) {
+      this.elements.musicStatus.textContent = message;
+    }
+  }
+
+  private updateUI(): void {
+    this.updateTrackInfo(this.playlist[this.currentIndex]);
+    this.updatePlayButton();
+    this.updateProgress();
+    if (this.elements.volumeSlider) {
+      this.elements.volumeSlider.value = (this.volume * 100).toString();
+    }
+  }
+
+  private showPlayingIndicator(): void {
+    if (this.elements.playingIndicator) {
+      this.elements.playingIndicator.classList.remove('hidden');
+    }
+  }
+
+  private hidePlayingIndicator(): void {
+    if (this.elements.playingIndicator) {
+      this.elements.playingIndicator.classList.add('hidden');
+    }
+  }
+
+  private showAutoplayInfo(): void {
+    if (this.elements.autoplayInfo) {
+      this.elements.autoplayInfo.classList.remove('hidden');
+    }
+  }
+
+  private hideAutoplayInfo(): void {
+    if (this.elements.autoplayInfo) {
+      this.elements.autoplayInfo.classList.add('hidden');
+    }
+  }
+
+  private togglePanel(): void {
+    if (this.isPanelOpen) {
+      this.closePanel();
+    } else {
+      this.openPanel();
+    }
+  }
+
+  private openPanel(): void {
+    if (!this.elements.panel || !this.elements.toggle) return;
+    
+    this.isPanelOpen = true;
+    
+    this.elements.panel.classList.remove('music-panel--closed');
+    this.elements.panel.classList.add('music-panel--open');
+    this.elements.panel.setAttribute('aria-hidden', 'false');
+    this.elements.toggle.setAttribute('aria-expanded', 'true');
+  }
+
+  private closePanel(): void {
+    if (!this.elements.panel || !this.elements.toggle) return;
+    
+    this.isPanelOpen = false;
+    
+    this.elements.panel.classList.remove('music-panel--open');
+    this.elements.panel.classList.add('music-panel--closed');
+    this.elements.panel.setAttribute('aria-hidden', 'true');
+    this.elements.toggle.setAttribute('aria-expanded', 'false');
+  }
+
+  private ensurePanelClosed(): void {
+    this.isPanelOpen = false;
+    this.closePanel();
+  }
+
+  private handleOutsideClick(e: Event): void {
+    const container = document.getElementById('music-player-container');
+    if (container && !container.contains(e.target as Node) && this.isPanelOpen) {
+      this.closePanel();
+    }
+  }
+
+  private handleError(message: string): void {
+    this.updateStatus(`Error: ${message}`);
+    this.showToast(message);
+  }
+
+  private showToast(message: string): void {
+    // Remove existing toasts
+    document.querySelectorAll('.music-toast').forEach(toast => toast.remove());
+    
+    const toast = document.createElement('div');
+    toast.className = 'music-toast';
+    toast.textContent = message;
+    toast.setAttribute('role', 'alert');
+    
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+      toast.remove();
+    }, 4000);
+  }
+
+  private formatTime(seconds: number): string {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  // Cleanup method
+  public destroy(): void {
+    this.stopProgressTracking();
+    if (this.currentSound) {
+      this.currentSound.stop();
+      this.currentSound.unload();
+    }
+  }
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    // Check if Howler is loaded
+    if (typeof Howl === 'undefined') {
+      console.error('❌ Howler.js not loaded');
+      return;
+    }
+    
+    const musicPlayer = new HowlerMusicPlayer();
+    
+    // Global access for debugging
+    (window as any).musicPlayer = musicPlayer;
+    
+    console.log('✅ Howler Music Player Ready');
+    console.log('💡 Replace demo URLs in playlist with your audio files');
+    
+  } catch (error) {
+    console.error('Failed to initialize Howler music player:', error);
+  }
+});
 </script>
 
-<!-- Include the same styles from previous version -->
 <style>
-  /* All the same styles as before... */
   :root {
     --music-primary: #8b5cf6;
     --music-secondary: #ec4899;
@@ -872,7 +815,6 @@
     color: var(--music-text-muted-dark);
   }
 
-  /* Progress section */
   .progress-section {
     @apply mb-6;
   }
@@ -917,7 +859,6 @@
     @apply opacity-100;
   }
 
-  /* Controls section */
   .controls-section {
     @apply flex items-center justify-center gap-4 mb-6;
   }
@@ -951,7 +892,6 @@
     box-shadow: 0 10px 25px -5px rgba(139, 92, 246, 0.4);
   }
 
-  /* Volume section */
   .volume-section {
     @apply flex items-center gap-3 mb-4;
   }
@@ -993,7 +933,6 @@
     @apply bg-gray-200 dark:bg-gray-700 h-2 rounded-lg border-0;
   }
 
-  /* Status section */
   .status-section {
     @apply text-center;
   }
@@ -1007,7 +946,6 @@
     color: var(--music-text-muted-dark);
   }
 
-  /* Toast notifications */
   .music-toast {
     @apply fixed bottom-20 right-4 bg-gray-900 dark:bg-gray-800 text-white;
     @apply px-4 py-3 rounded-lg shadow-lg z-50 text-sm max-w-xs;
@@ -1015,13 +953,11 @@
     animation: slideUpFade 0.3s ease-out forwards, fadeOut 0.3s ease-out 3.7s forwards;
   }
 
-  /* Screen reader only content */
   .sr-only {
     @apply absolute w-px h-px p-0 -m-px overflow-hidden whitespace-nowrap border-0;
     clip: rect(0, 0, 0, 0);
   }
 
-  /* Animations */
   @keyframes slideUpFade {
     from {
       transform: translateY(1rem);
@@ -1042,7 +978,6 @@
     }
   }
 
-  /* Playing indicator animation */
   .play-pause-btn[data-state="playing"]::before {
     content: "";
     @apply absolute inset-0 rounded-full;
@@ -1062,7 +997,6 @@
     }
   }
 
-  /* Mobile responsive */
   @media (max-width: 640px) {
     .music-panel {
       @apply w-72 right-2;
@@ -1077,7 +1011,6 @@
     }
   }
 
-  /* Ensure panel starts closed */
   #music-panel {
     opacity: 0 !important;
     pointer-events: none !important;
@@ -1092,41 +1025,3 @@
     transform: translateY(0) scale(1) !important;
   }
 </style>
-
-<!-- File checker script to help debug missing audio files -->
-<script>
-  // Debug helper to check if audio files exist
-  window.checkAudioFiles = async function() {
-    const files = [
-      '/music/raining-tacos.mp3',
-      '/music/lofi-beat.mp3'
-    ];
-
-    console.log('🔍 Checking audio files...');
-    
-    for (const file of files) {
-      try {
-        const response = await fetch(file, { method: 'HEAD' });
-        if (response.ok) {
-          console.log(`✅ ${file} - Found`);
-        } else {
-          console.log(`❌ ${file} - Not found (${response.status})`);
-        }
-      } catch (error) {
-        console.log(`❌ ${file} - Error: ${(error as Error).message}`);
-      }
-    }
-    
-    console.log('💡 To add music files:');
-    console.log('1. Create public/music/ folder');
-    console.log('2. Add your .mp3 files there');
-    console.log('3. Update playlist in MusicPlayer component');
-  };
-
-  // Auto-check files on dev mode
-  if (import.meta.env.DEV) {
-    setTimeout(() => {
-      window.checkAudioFiles();
-    }, 2000);
-  }
-</script>
