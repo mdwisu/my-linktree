@@ -185,7 +185,8 @@
       autoplay: true,
       startWithFirstClick: true,
       volume: 50,
-      showAutoplayInfo: true
+      showAutoplayInfo: true,
+      isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
     };
     
     private readonly playlist: readonly Track[] = [
@@ -258,7 +259,7 @@
 
     private setupAutoplayDetection(): void {
       // Track any user interaction to enable autoplay
-      const userInteractionEvents = ['click', 'keydown', 'touchstart'];
+      const userInteractionEvents = ['click', 'keydown', 'touchstart', 'touchend'];
       
       const handleUserInteraction = () => {
         if (!this.state.userHasInteracted) {
@@ -278,6 +279,15 @@
           signal: this.eventAbortController.signal 
         });
       });
+
+      // Tambahan untuk mobile: coba autoplay setelah interaksi pertama
+      if (this.config.isMobile) {
+        document.addEventListener('touchstart', () => {
+          if (!this.state.autoplayAttempted && this.config.autoplay) {
+            this.attemptAutoplay();
+          }
+        }, { once: true, signal: this.eventAbortController.signal });
+      }
     }
 
     private async attemptAutoplay(): Promise<void> {
@@ -286,16 +296,27 @@
       this.state.autoplayAttempted = true;
       
       try {
-        // Small delay to ensure user interaction is registered
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Untuk mobile, tunggu sedikit lebih lama
+        const delay = this.config.isMobile ? 500 : 100;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        // Set volume ke 0 dulu untuk menghindari suara keras
+        const originalVolume = this.audio.volume;
+        this.audio.volume = 0;
         
         await this.play();
-        this.updateStatus('Auto-playing...');
-        this.showPlayingIndicator();
+        
+        // Kembalikan volume secara bertahap
+        if (this.state.isPlaying) {
+          this.audio.volume = originalVolume;
+          this.updateStatus('Auto-playing...');
+          this.showPlayingIndicator();
+        }
         
       } catch (error) {
         console.warn('Autoplay failed:', error);
         this.updateStatus('Click play to start');
+        this.showAutoplayInfo();
       }
     }
 
@@ -587,6 +608,9 @@
     private showAutoplayInfo(): void {
       const info = this.elements.get('autoplay-info') as HTMLElement;
       if (info && this.config.showAutoplayInfo) {
+        info.textContent = this.config.isMobile 
+          ? 'Tap anywhere to enable audio'
+          : 'Click play button to start music';
         info.classList.remove('hidden');
       }
     }
