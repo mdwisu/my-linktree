@@ -1,3 +1,4 @@
+// src/components/MusicPlayer.astro - FIXED VERSION
 ---
 // Modern music player with proper error handling and accessibility
 // Panel stays CLOSED by default
@@ -133,10 +134,10 @@
   </div>
 </div>
 
-<!-- Audio Element with proper attributes -->
+<!-- Audio Element with autoplay attributes -->
 <audio 
   id="audio-player"
-  preload="none"
+  preload="auto"
   crossorigin="anonymous"
   aria-hidden="true"
 ></audio>
@@ -169,24 +170,17 @@
     private state: PlayerState;
     private autoplayAttempted = false;
     
-    // Configuration - DISABLE autoplay by default
+    // Configuration - ENABLE autoplay
     private readonly config = {
       maxRetries: 3,
       fadeOutDuration: 500,
-      autoplay: false, // CHANGED: Disabled autoplay
+      autoplay: true, // CHANGED: Enable autoplay
       preloadNext: true,
       saveVolume: true,
-      openPanelOnInit: false // ADDED: Don't open panel on init
+      openPanelOnInit: false // Keep panel closed but enable autoplay
     };
     
     private readonly playlist: readonly Track[] = [
-    {
-        id: 'tacos-1',
-        title: 'Raining Tacos',
-        artist: 'Parry Gripp & Boonebum',
-        src: '/music/raining-tacos.mp3',
-        duration: 180
-      },
       {
         id: 'lofi-1',
         title: 'Lofi Hip Hop Beat',
@@ -194,6 +188,20 @@
         src: '/music/lofi-beat.mp3',
         duration: 180
       },
+      {
+        id: 'ambient-1',
+        title: 'Ambient Relaxing',
+        artist: 'Nature Sounds',
+        src: '/music/ambient.mp3',
+        duration: 240
+      },
+      {
+        id: 'jazz-1',
+        title: 'Jazz Cafe',
+        artist: 'Smooth Jazz',
+        src: '/music/jazz-cafe.mp3',
+        duration: 210
+      }
     ];
 
     constructor() {
@@ -226,13 +234,16 @@
         this.setupAudioEventListeners();
         this.setupKeyboardNavigation();
         
-        // DON'T auto-load track immediately
-        // await this.loadTrack(this.state.currentTrackIndex);
+        // Load first track immediately for autoplay
+        await this.loadTrack(this.state.currentTrackIndex);
         
         this.updateUI();
-        this.ensurePanelClosed(); // ADDED: Ensure panel is closed
+        this.ensurePanelClosed(); // Panel stays closed but music loads
         
-        // NO autoplay on init
+        // Attempt autoplay after initialization
+        if (this.config.autoplay) {
+          this.scheduleAutoplay();
+        }
         
       } catch (error) {
         console.error('Failed to initialize music player:', error);
@@ -265,7 +276,7 @@
       this.addEventListenerSafely('play-pause-btn', 'click', async (e) => {
         e.preventDefault();
         
-        // Load track on first play if not loaded
+        // Load track if not loaded (fallback, should already be loaded)
         if (!this.audio.src) {
           await this.loadTrack(this.state.currentTrackIndex);
         }
@@ -555,14 +566,13 @@
 
     // UI Update Methods
     private updateUI(): void {
-      // Only update track info if a track is loaded
-      if (this.audio.src) {
-        this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
-      }
+      // Always update track info since track is loaded on init
+      this.updateTrackInfo(this.playlist[this.state.currentTrackIndex]);
       this.updatePlayButton();
       this.updateControls();
       this.updateProgress();
       this.updateVolume();
+      this.updateStatus('Ready to play');
     }
 
     private updateTrackInfo(track: Track): void {
@@ -723,6 +733,19 @@
       setTimeout(() => {
         toast.remove();
       }, 4000);
+    }
+
+    private scheduleAutoplay(): void {
+      if (this.autoplayAttempted) return;
+      
+      setTimeout(async () => {
+        try {
+          await this.play();
+          this.autoplayAttempted = true;
+        } catch (error) {
+          console.warn('Autoplay failed:', error);
+        }
+      }, 1000);
     }
 
     // Cleanup
